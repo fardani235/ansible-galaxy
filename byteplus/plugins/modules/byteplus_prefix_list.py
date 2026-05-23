@@ -106,7 +106,7 @@ author:
 
 EXAMPLES = r'''
 - name: Create a prefix list for office IP whitelisting
-  byteplus.cloud.byteplus_prefix_list:
+  fardani235.byteplus.byteplus_prefix_list:
     prefix_list_name: office-egress
     description: Corporate network egress IPs
     max_entries: 50
@@ -118,7 +118,7 @@ EXAMPLES = r'''
         description: Branch Tokyo
 
 - name: Add a new office network to an existing list (no removals)
-  byteplus.cloud.byteplus_prefix_list:
+  fardani235.byteplus.byteplus_prefix_list:
     prefix_list_name: office-egress
     project_name: prod
     entries:
@@ -126,7 +126,7 @@ EXAMPLES = r'''
         description: New branch Sydney
 
 - name: Reconcile membership exactly (removes anything not listed)
-  byteplus.cloud.byteplus_prefix_list:
+  fardani235.byteplus.byteplus_prefix_list:
     prefix_list_name: office-egress
     project_name: prod
     purge_entries: true
@@ -135,7 +135,7 @@ EXAMPLES = r'''
       - cidr: 192.0.2.0/24
 
 - name: Reference the prefix list from a security group rule
-  byteplus.cloud.byteplus_security_group_rule:
+  fardani235.byteplus.byteplus_security_group_rule:
     security_group_id: sg-web
     direction: ingress
     protocol: tcp
@@ -144,7 +144,7 @@ EXAMPLES = r'''
     prefix_list_id: "{{ pl.prefix_list.prefix_list_id }}"
 
 - name: Delete a prefix list
-  byteplus.cloud.byteplus_prefix_list:
+  fardani235.byteplus.byteplus_prefix_list:
     prefix_list_name: legacy-vpn-peers
     project_name: prod
     state: absent

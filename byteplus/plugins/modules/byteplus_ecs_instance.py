@@ -232,7 +232,7 @@ author:
 
 EXAMPLES = r'''
 - name: Launch a single ECS instance
-  byteplus.cloud.byteplus_ecs_instance:
+  fardani235.byteplus.byteplus_ecs_instance:
     instance_name: web-01
     zone_id: ap-southeast-1a
     image_id: image-ybvz29l3da0smmpnfb02
@@ -244,7 +244,7 @@ EXAMPLES = r'''
     state: started
 
 - name: Launch with a 100 GiB system disk and a 500 GiB data disk
-  byteplus.cloud.byteplus_ecs_instance:
+  fardani235.byteplus.byteplus_ecs_instance:
     instance_name: db-01
     zone_id: ap-southeast-1a
     image_id: image-ybvz29l3da0smmpnfb02
@@ -264,7 +264,7 @@ EXAMPLES = r'''
     state: started
 
 - name: Same shape, using the system_volume/data_volumes split form
-  byteplus.cloud.byteplus_ecs_instance:
+  fardani235.byteplus.byteplus_ecs_instance:
     instance_name: db-02
     zone_id: ap-southeast-1a
     image_id: image-ybvz29l3da0smmpnfb02
@@ -282,18 +282,18 @@ EXAMPLES = r'''
     state: started
 
 - name: Stop an instance
-  byteplus.cloud.byteplus_ecs_instance:
+  fardani235.byteplus.byteplus_ecs_instance:
     instance_id: i-ybw0lke12345
     state: stopped
 
 - name: Force-reboot
-  byteplus.cloud.byteplus_ecs_instance:
+  fardani235.byteplus.byteplus_ecs_instance:
     instance_id: i-ybw0lke12345
     state: restarted
     force: true
 
 - name: Delete an instance and wait
-  byteplus.cloud.byteplus_ecs_instance:
+  fardani235.byteplus.byteplus_ecs_instance:
     instance_id: i-ybw0lke12345
     state: absent
     wait: true

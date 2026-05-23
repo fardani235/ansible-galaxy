@@ -122,7 +122,7 @@ requirements:
 
 EXAMPLES = r'''
 - name: Create an A record for www.example.com
-  byteplus.cloud.byteplus_dns_record:
+  fardani235.byteplus.byteplus_dns_record:
     access_key: "{{ byteplus_access_key }}"
     secret_key: "{{ byteplus_secret_key }}"
     domain_name: example.com
@@ -133,7 +133,7 @@ EXAMPLES = r'''
     state: present
 
 - name: Create an A record using zone_id
-  byteplus.cloud.byteplus_dns_record:
+  fardani235.byteplus.byteplus_dns_record:
     zone_id: 454458
     host: "@"
     record_type: A
@@ -141,7 +141,7 @@ EXAMPLES = r'''
     state: present
 
 - name: Create a CNAME record
-  byteplus.cloud.byteplus_dns_record:
+  fardani235.byteplus.byteplus_dns_record:
     domain_name: example.com
     host: blog
     record_type: CNAME
@@ -150,7 +150,7 @@ EXAMPLES = r'''
     state: present
 
 - name: Update existing record value
-  byteplus.cloud.byteplus_dns_record:
+  fardani235.byteplus.byteplus_dns_record:
     record_id: "3170534137672596377"
     host: www
     line: default
@@ -158,12 +158,12 @@ EXAMPLES = r'''
     state: present
 
 - name: Delete a record by ID
-  byteplus.cloud.byteplus_dns_record:
+  fardani235.byteplus.byteplus_dns_record:
     record_id: "3170534137672596377"
     state: absent
 
 - name: Delete records matching host and type
-  byteplus.cloud.byteplus_dns_record:
+  fardani235.byteplus.byteplus_dns_record:
     domain_name: example.com
     host: blog
     record_type: CNAME

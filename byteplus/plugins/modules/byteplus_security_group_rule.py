@@ -105,7 +105,7 @@ author:
 
 EXAMPLES = r'''
 - name: Allow HTTPS in from anywhere
-  byteplus.cloud.byteplus_security_group_rule:
+  fardani235.byteplus.byteplus_security_group_rule:
     security_group_id: sg-2d6jskeu1exxw58ozfd5xyz
     direction: ingress
     protocol: tcp
@@ -116,7 +116,7 @@ EXAMPLES = r'''
     description: Public HTTPS
 
 - name: Allow internal traffic from another SG
-  byteplus.cloud.byteplus_security_group_rule:
+  fardani235.byteplus.byteplus_security_group_rule:
     security_group_id: sg-web
     direction: ingress
     protocol: tcp
@@ -126,7 +126,7 @@ EXAMPLES = r'''
     policy: accept
 
 - name: Block one specific CIDR from talking to anything
-  byteplus.cloud.byteplus_security_group_rule:
+  fardani235.byteplus.byteplus_security_group_rule:
     security_group_id: sg-2d6jskeu1exxw58ozfd5xyz
     direction: ingress
     protocol: all
@@ -137,7 +137,7 @@ EXAMPLES = r'''
     priority: 1
 
 - name: Revoke a rule
-  byteplus.cloud.byteplus_security_group_rule:
+  fardani235.byteplus.byteplus_security_group_rule:
     security_group_id: sg-2d6jskeu1exxw58ozfd5xyz
     direction: ingress
     protocol: tcp

@@ -69,13 +69,13 @@ author:
 
 EXAMPLES = r'''
 - name: List all running instances in a zone
-  byteplus.cloud.byteplus_ecs_instance_info:
+  fardani235.byteplus.byteplus_ecs_instance_info:
     zone_id: ap-southeast-1a
     status: RUNNING
   register: ecs_info
 
 - name: Look up specific instances
-  byteplus.cloud.byteplus_ecs_instance_info:
+  fardani235.byteplus.byteplus_ecs_instance_info:
     instance_ids:
       - i-ybw0lke12345
       - i-ybw0lkeabcdef

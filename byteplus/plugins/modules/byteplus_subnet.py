@@ -80,14 +80,14 @@ author:
 
 EXAMPLES = r'''
 - name: Create a subnet
-  byteplus.cloud.byteplus_subnet:
+  fardani235.byteplus.byteplus_subnet:
     subnet_name: web-tier-a
     vpc_id: vpc-2d6jskeu1exxw58ozfd5xyz
     zone_id: ap-southeast-1a
     cidr_block: 172.16.1.0/24
 
 - name: Delete a subnet by name
-  byteplus.cloud.byteplus_subnet:
+  fardani235.byteplus.byteplus_subnet:
     subnet_name: web-tier-a
     vpc_id: vpc-2d6jskeu1exxw58ozfd5xyz
     state: absent

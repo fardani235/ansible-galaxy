@@ -66,12 +66,12 @@ author:
 
 EXAMPLES = r'''
 - name: List all prefix lists in a project
-  byteplus.cloud.byteplus_prefix_list_info:
+  fardani235.byteplus.byteplus_prefix_list_info:
     project_name: prod
   register: pl_info
 
 - name: Get one prefix list with its entries
-  byteplus.cloud.byteplus_prefix_list_info:
+  fardani235.byteplus.byteplus_prefix_list_info:
     prefix_list_name: office-egress
     project_name: prod
     include_entries: true

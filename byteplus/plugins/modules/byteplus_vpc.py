@@ -86,7 +86,7 @@ author:
 
 EXAMPLES = r'''
 - name: Create a VPC
-  byteplus.cloud.byteplus_vpc:
+  fardani235.byteplus.byteplus_vpc:
     vpc_name: prod-vpc
     cidr_block: 172.16.0.0/16
     project_name: prod
@@ -95,7 +95,7 @@ EXAMPLES = r'''
         value: prod
 
 - name: Delete a VPC by name
-  byteplus.cloud.byteplus_vpc:
+  fardani235.byteplus.byteplus_vpc:
     vpc_name: scratch-vpc
     project_name: dev
     state: absent
