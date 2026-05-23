@@ -1,6 +1,6 @@
 namespace: fardani235
 name: byteplus
-version: 1.0.1
+version: 1.0.2
 readme: README.md
 authors:
   - fardani235 <https://github.com/fardani235>
@@ -28,3 +28,7 @@ build_ignore:
   - .git
   - .github
   - tests
+  # Smoke playbook talks to a live BytePlus account and is for repo
+  # maintainers, not collection consumers — keep it out of the tarball.
+  - playbooks/*.yml
+  - fardani235-byteplus-*.tar.gz

@@ -426,15 +426,18 @@ def _ensure_present(module, client):
         if not needs_update:
             module.exit_json(changed=False, record=existing)
 
+        # `Line` is required by UpdateRecord — when the caller didn't set it,
+        # preserve the existing record's line rather than omitting it (which
+        # would yield "Bad Request") or defaulting to 'default' (which would
+        # silently move a non-default-line record back to default).
         update_kwargs = {
             'record_id': existing['RecordID'],
             'host': host,
             'value': value,
             'record_type': record_type,
             'ttl': p['ttl'],
+            'line': p['line'] if p['line'] is not None else (existing.get('Line') or 'default'),
         }
-        if p['line'] is not None:
-            update_kwargs['line'] = p['line']
         if p['weight'] is not None:
             update_kwargs['weight'] = p['weight']
         if p['remark'] is not None:
@@ -456,9 +459,8 @@ def _ensure_present(module, client):
             'value': value,
             'record_type': record_type,
             'ttl': p['ttl'],
+            'line': p['line'] if p['line'] is not None else (existing.get('Line') or 'default'),
         }
-        if p['line'] is not None:
-            update_kwargs['line'] = p['line']
         if p['weight'] is not None:
             update_kwargs['weight'] = p['weight']
         if p['remark'] is not None:
