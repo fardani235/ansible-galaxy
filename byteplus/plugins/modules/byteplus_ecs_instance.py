@@ -155,8 +155,8 @@ options:
     description:
       - Atomically allocate and attach an Elastic IP at launch time.
       - Only honored on initial create; ignored when the instance already exists.
-      - Set C(release_with_instance: true) to have the EIP automatically released
-        when the instance is deleted (recommended for smoke tests / ephemeral VMs).
+      - "Set C(release_with_instance: true) to have the EIP automatically released
+        when the instance is deleted (recommended for smoke tests / ephemeral VMs)."
     type: dict
     suboptions:
       charge_type:
