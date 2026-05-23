@@ -21,9 +21,9 @@ tags:
   - prefixlist
   - infrastructure
 dependencies: {}
-repository: https://github.com/byteplus-sdk/byteplus-python-sdk-v2
-homepage: https://github.com/byteplus-sdk/byteplus-python-sdk-v2
-issues: https://github.com/byteplus-sdk/byteplus-python-sdk-v2/issues
+repository: https://github.com/fardani235/ansible-galaxy/tree/main/byteplus
+homepage: https://github.com/fardani235/ansible-galaxy/tree/main/byteplus
+issues: https://github.com/fardani235/ansible-galaxy/tree/main/byteplus/issues
 build_ignore:
   - .git
   - .github
