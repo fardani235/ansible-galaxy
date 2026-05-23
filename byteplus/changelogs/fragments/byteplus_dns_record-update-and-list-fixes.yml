@@ -1,0 +1,17 @@
+---
+bugfixes:
+  - >
+    byteplus_dns_record - Fix C(UpdateRecord) calls failing with an opaque
+    "Bad Request" when the caller did not specify O(line). The BytePlus
+    DNS C(UpdateRecord) API requires C(Line) in the request body, so the
+    module now preserves the existing record's line on update rather than
+    omitting the field. Defaults to C(default) only if the existing record
+    has no line set.
+  - >
+    byteplus_dns_record - Fix idempotency lookups silently missing records
+    whose host matched as a substring of a different host (or vice versa).
+    The module now passes C(SearchMode=exact) to the BytePlus
+    C(ListRecords) API, which defaults to fuzzy (C(like)) matching on the
+    Host filter. This makes the C(state: present) duplicate-detection path
+    deterministic across hosts that share prefixes (e.g. C(www) vs
+    C(www2)).

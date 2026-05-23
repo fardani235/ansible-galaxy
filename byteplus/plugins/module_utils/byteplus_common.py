@@ -99,10 +99,16 @@ class BytePlusClient:
         return self._make_request('UpdateRecord', params)
 
     def list_records(self, zone_id, host=None, record_type=None,
-                     page_number=1, page_size=50):
+                     page_number=1, page_size=50, search_mode='exact'):
         params = {'ZID': zone_id}
         if host:
             params['Host'] = host
+            # The API defaults Host matching to `like` (fuzzy/substring), which
+            # silently excludes records that callers asked for by exact name.
+            # Force `exact` so idempotency lookups by (zone, host, type) are
+            # actually deterministic. Callers can pass search_mode='like'
+            # explicitly if they want the legacy behaviour.
+            params['SearchMode'] = search_mode
         if record_type:
             params['Type'] = record_type
         if page_number:
