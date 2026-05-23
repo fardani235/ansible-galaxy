@@ -1,0 +1,30 @@
+namespace: fardani235
+name: byteplus
+version: 1.0.0
+readme: README.md
+authors:
+  - fardani235 <https://github.com/fardani235>
+description: Ansible Collection for managing BytePlus cloud resources (DNS, TOS, ECS, VPC, and more)
+license:
+  - Apache-2.0
+tags:
+  - byteplus
+  - cloud
+  - dns
+  - tos
+  - objectstorage
+  - ecs
+  - compute
+  - vpc
+  - networking
+  - securitygroup
+  - prefixlist
+  - infrastructure
+dependencies: {}
+repository: https://github.com/byteplus-sdk/byteplus-python-sdk-v2
+homepage: https://github.com/byteplus-sdk/byteplus-python-sdk-v2
+issues: https://github.com/byteplus-sdk/byteplus-python-sdk-v2/issues
+build_ignore:
+  - .git
+  - .github
+  - tests
