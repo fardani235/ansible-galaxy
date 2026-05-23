@@ -73,14 +73,14 @@ author:
 
 EXAMPLES = r'''
 - name: Create a security group
-  byteplus.cloud.byteplus_security_group:
+  fardani235.byteplus.byteplus_security_group:
     security_group_name: web-tier
     vpc_id: vpc-2d6jskeu1exxw58ozfd5xyz
     description: Allows HTTPS in
     project_name: prod
 
 - name: Delete an SG by name
-  byteplus.cloud.byteplus_security_group:
+  fardani235.byteplus.byteplus_security_group:
     security_group_name: web-tier
     vpc_id: vpc-2d6jskeu1exxw58ozfd5xyz
     state: absent
