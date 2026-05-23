@@ -1,0 +1,184 @@
+---
+# Smoke test for fardani235.byteplus.byteplus_dns_record.
+#
+# Runs against a real BytePlus DNS account. Requires:
+#   BYTEPLUS_ACCESS_KEY, BYTEPLUS_SECRET_KEY  — credentials
+#   DNS_DOMAIN                                — a zone you own in BytePlus DNS
+#
+# The host is randomised per run so concurrent runs don't collide, and the
+# `Always — clean up test records` block runs even on assertion failure so a
+# failed run doesn't leave orphan records behind.
+#
+# Usage:
+#   DNS_DOMAIN=example.com ansible-playbook playbooks/smoke_dns.yml
+
+- name: Smoke test byteplus_dns_record
+  hosts: localhost
+  gather_facts: false
+  vars:
+    test_domain: "{{ lookup('env', 'DNS_DOMAIN') | default('example.com', true) }}"
+
+  tasks:
+    - name: Fail fast if DNS_DOMAIN is unset
+      assert:
+        that:
+          - test_domain != 'example.com'
+        fail_msg: >-
+          DNS_DOMAIN is not set. Refusing to run against the reserved
+          example.com domain — export DNS_DOMAIN to a zone you own.
+
+    # `{{ 999999 | random }}` re-rolls on every reference when used as a
+    # play-level var, so two tasks would see two different hosts. set_fact
+    # pins the value once for the whole play.
+    - name: Pin a unique test_host for this run
+      set_fact:
+        test_host: "smoke-test-{{ 999999 | random }}"
+
+    - name: Announce test_host
+      debug:
+        msg: "Using test_host={{ test_host }} in zone {{ test_domain }}"
+
+    - block:
+        - name: Create an A record
+          fardani235.byteplus.byteplus_dns_record:
+            domain_name: "{{ test_domain }}"
+            host: "{{ test_host }}"
+            record_type: A
+            value: 203.0.113.10
+            ttl: 600
+            state: present
+          register: create
+
+        - name: Assert creation succeeded
+          assert:
+            that:
+              - create.changed
+              - create.record_id is defined
+            fail_msg: "DNS record creation failed"
+
+        - name: Idempotency — same params
+          fardani235.byteplus.byteplus_dns_record:
+            domain_name: "{{ test_domain }}"
+            host: "{{ test_host }}"
+            record_type: A
+            value: 203.0.113.10
+            ttl: 600
+            state: present
+          register: idem
+
+        - name: Assert no change on idempotent re-run
+          assert:
+            that:
+              - not idem.changed
+            fail_msg: "Idempotency check failed — should have been a no-op"
+
+        # NOTE: BytePlus DNS enforces a zone-edition-specific minimum TTL
+        # (commonly 600s on Free/Basic editions); shorter TTLs are rejected
+        # with an unhelpful "Bad Request". Use 1200s to stay above any
+        # plausible minimum while still exercising the update path.
+        - name: Update TTL
+          fardani235.byteplus.byteplus_dns_record:
+            domain_name: "{{ test_domain }}"
+            host: "{{ test_host }}"
+            record_type: A
+            value: 203.0.113.10
+            ttl: 1200
+            state: present
+          register: ttl_update
+
+        - name: Assert TTL update was detected
+          assert:
+            that:
+              - ttl_update.changed
+            fail_msg: "TTL change was not detected"
+
+        - name: Update value (same host/type, different IP)
+          fardani235.byteplus.byteplus_dns_record:
+            domain_name: "{{ test_domain }}"
+            host: "{{ test_host }}"
+            record_type: A
+            value: 203.0.113.20
+            ttl: 1200
+            state: present
+          register: val_update
+
+        - name: Assert value update was applied
+          assert:
+            that:
+              - val_update.changed
+            fail_msg: "Value change was not applied"
+
+        # NOTE: BytePlus rejects TXT values containing literal `"` chars
+        # (Bad Request from CreateRecord). Quoting the rdata is a BIND-zone
+        # convention — the API stores raw text.
+        - name: Create a TXT record
+          fardani235.byteplus.byteplus_dns_record:
+            domain_name: "{{ test_domain }}"
+            host: "{{ test_host }}"
+            record_type: TXT
+            value: smoke-test-verification
+            ttl: 600
+            state: present
+          register: txt_create
+
+        - name: Assert TXT record created
+          assert:
+            that:
+              - txt_create.changed
+              - txt_create.record_id is defined
+            fail_msg: "TXT record creation failed"
+
+        - name: Delete the A record by host/type/value
+          fardani235.byteplus.byteplus_dns_record:
+            domain_name: "{{ test_domain }}"
+            host: "{{ test_host }}"
+            record_type: A
+            value: 203.0.113.20
+            state: absent
+          register: delete_a
+
+        - name: Assert A record deleted
+          assert:
+            that:
+              - delete_a.changed
+            fail_msg: "A record deletion failed"
+
+        - name: Idempotent delete — already gone
+          fardani235.byteplus.byteplus_dns_record:
+            domain_name: "{{ test_domain }}"
+            host: "{{ test_host }}"
+            record_type: A
+            value: 203.0.113.20
+            state: absent
+          register: delete_a_idem
+
+        - name: Assert no change on already-deleted record
+          assert:
+            that:
+              - not delete_a_idem.changed
+            fail_msg: "Second delete should have been a no-op"
+
+        - name: Report result
+          debug:
+            msg: "Smoke test PASSED"
+
+      always:
+        # Best-effort sweep. `delete_all: true` covers the case where an
+        # assertion failed mid-run and multiple records share (host, type).
+        - name: Always — clean up A records for test host
+          fardani235.byteplus.byteplus_dns_record:
+            domain_name: "{{ test_domain }}"
+            host: "{{ test_host }}"
+            record_type: A
+            state: absent
+            delete_all: true
+          failed_when: false
+
+        - name: Always — clean up TXT records for test host
+          fardani235.byteplus.byteplus_dns_record:
+            domain_name: "{{ test_domain }}"
+            host: "{{ test_host }}"
+            record_type: TXT
+            state: absent
+            delete_all: true
+          failed_when: false
