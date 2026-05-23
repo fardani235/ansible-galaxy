@@ -31,19 +31,19 @@ def _load_module():
         'ansible_collections.byteplus',
         type(sys)('ansible_collections.byteplus'))
     sys.modules.setdefault(
-        'ansible_collections.byteplus.cloud',
-        type(sys)('ansible_collections.byteplus.cloud'))
+        'ansible_collections.fardani235.byteplus',
+        type(sys)('ansible_collections.fardani235.byteplus'))
     sys.modules.setdefault(
-        'ansible_collections.byteplus.cloud.plugins',
-        type(sys)('ansible_collections.byteplus.cloud.plugins'))
+        'ansible_collections.fardani235.byteplus.plugins',
+        type(sys)('ansible_collections.fardani235.byteplus.plugins'))
     sys.modules.setdefault(
-        'ansible_collections.byteplus.cloud.plugins.module_utils',
-        type(sys)('ansible_collections.byteplus.cloud.plugins.module_utils'))
+        'ansible_collections.fardani235.byteplus.plugins.module_utils',
+        type(sys)('ansible_collections.fardani235.byteplus.plugins.module_utils'))
     bp_common = type(sys)(
-        'ansible_collections.byteplus.cloud.plugins.module_utils.byteplus_common')
+        'ansible_collections.fardani235.byteplus.plugins.module_utils.byteplus_common')
     bp_common.BytePlusClient = object
     sys.modules[
-        'ansible_collections.byteplus.cloud.plugins.module_utils.byteplus_common'
+        'ansible_collections.fardani235.byteplus.plugins.module_utils.byteplus_common'
     ] = bp_common
     spec.loader.exec_module(mod)
     return mod

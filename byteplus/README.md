@@ -1,6 +1,6 @@
 # BytePlus Cloud Ansible Collection
 
-Ansible collection for managing BytePlus cloud resources. Currently supports DNS record management and TOS (Torch Object Storage) bucket/object management.
+Ansible collection for managing BytePlus cloud resources. Currently supports VPC, ECS, DNS record management and TOS (Torch Object Storage) bucket/object management.
 
 ## Requirements
 
@@ -65,7 +65,7 @@ Manage DNS records (A, AAAA, CNAME, MX, TXT, NS, SRV, CAA).
 
 ```yaml
 - name: Create an A record
-  byteplus.cloud.byteplus_dns_record:
+  fardani235.byteplus.byteplus_dns_record:
     domain_name: example.com
     host: www
     record_type: A
@@ -74,7 +74,7 @@ Manage DNS records (A, AAAA, CNAME, MX, TXT, NS, SRV, CAA).
     secret_key: "{{ byteplus_secret_key }}"
 
 - name: Delete a CNAME record
-  byteplus.cloud.byteplus_dns_record:
+  fardani235.byteplus.byteplus_dns_record:
     domain_name: example.com
     host: api
     record_type: CNAME
@@ -84,7 +84,7 @@ Manage DNS records (A, AAAA, CNAME, MX, TXT, NS, SRV, CAA).
     secret_key: "{{ byteplus_secret_key }}"
 
 - name: Create MX record with priority
-  byteplus.cloud.byteplus_dns_record:
+  fardani235.byteplus.byteplus_dns_record:
     domain_name: example.com
     host: @
     record_type: MX
@@ -94,7 +94,7 @@ Manage DNS records (A, AAAA, CNAME, MX, TXT, NS, SRV, CAA).
     secret_key: "{{ byteplus_secret_key }}"
 
 - name: Create a TXT record for SPF
-  byteplus.cloud.byteplus_dns_record:
+  fardani235.byteplus.byteplus_dns_record:
     domain_name: example.com
     host: @
     record_type: TXT
@@ -118,14 +118,14 @@ Manage TOS buckets (create, delete, check existence).
 
 ```yaml
 - name: Create a bucket
-  byteplus.cloud.byteplus_tos_bucket:
+  fardani235.byteplus.byteplus_tos_bucket:
     bucket_name: my-data-bucket
     access_key: "{{ byteplus_access_key }}"
     secret_key: "{{ byteplus_secret_key }}"
     region: ap-southeast-1
 
 - name: Delete a bucket
-  byteplus.cloud.byteplus_tos_bucket:
+  fardani235.byteplus.byteplus_tos_bucket:
     bucket_name: my-old-bucket
     state: absent
     access_key: "{{ byteplus_access_key }}"
@@ -152,7 +152,7 @@ Manage TOS objects (upload, delete, check existence). Idempotent via MD5/ETag co
 
 ```yaml
 - name: Upload a file
-  byteplus.cloud.byteplus_tos_object:
+  fardani235.byteplus.byteplus_tos_object:
     bucket_name: my-data-bucket
     object_key: configs/app.yaml
     src: ./app.yaml
@@ -161,7 +161,7 @@ Manage TOS objects (upload, delete, check existence). Idempotent via MD5/ETag co
     region: ap-southeast-1
 
 - name: Upload inline content
-  byteplus.cloud.byteplus_tos_object:
+  fardani235.byteplus.byteplus_tos_object:
     bucket_name: my-data-bucket
     object_key: configs/settings.json
     content: '{"debug": true, "port": 8080}'
@@ -171,7 +171,7 @@ Manage TOS objects (upload, delete, check existence). Idempotent via MD5/ETag co
     region: ap-southeast-1
 
 - name: Delete an object
-  byteplus.cloud.byteplus_tos_object:
+  fardani235.byteplus.byteplus_tos_object:
     bucket_name: my-data-bucket
     object_key: old-file.txt
     state: absent
@@ -213,7 +213,7 @@ be unique — the module fails closed if a name matches multiple instances).
 
 ```yaml
 - name: Launch an instance and wait for it to be running
-  byteplus.cloud.byteplus_ecs_instance:
+  fardani235.byteplus.byteplus_ecs_instance:
     instance_name: web-01
     zone_id: ap-southeast-1a
     image_id: image-ybvz29l3da0smmpnfb02
@@ -224,18 +224,18 @@ be unique — the module fails closed if a name matches multiple instances).
     state: started
 
 - name: Stop an instance
-  byteplus.cloud.byteplus_ecs_instance:
+  fardani235.byteplus.byteplus_ecs_instance:
     instance_id: i-ybw0lke12345
     state: stopped
 
 - name: Force-reboot
-  byteplus.cloud.byteplus_ecs_instance:
+  fardani235.byteplus.byteplus_ecs_instance:
     instance_id: i-ybw0lke12345
     state: restarted
     force: true
 
 - name: Delete and wait
-  byteplus.cloud.byteplus_ecs_instance:
+  fardani235.byteplus.byteplus_ecs_instance:
     instance_id: i-ybw0lke12345
     state: absent
 ```
@@ -259,7 +259,7 @@ Read-only listing/describe with automatic pagination.
 
 ```yaml
 - name: List running instances in a zone
-  byteplus.cloud.byteplus_ecs_instance_info:
+  fardani235.byteplus.byteplus_ecs_instance_info:
     zone_id: ap-southeast-1a
     status: RUNNING
   register: ecs_info
@@ -285,26 +285,26 @@ Manage VPC networking primitives. All three share a common pattern:
 ```yaml
 - name: Stand up a VPC + subnet + SG, then launch an instance into them
   block:
-    - byteplus.cloud.byteplus_vpc:
+    - fardani235.byteplus.byteplus_vpc:
         vpc_name: prod-vpc
         cidr_block: 172.16.0.0/16
         project_name: prod
       register: vpc
 
-    - byteplus.cloud.byteplus_subnet:
+    - fardani235.byteplus.byteplus_subnet:
         subnet_name: web-a
         vpc_id: "{{ vpc.vpc.vpc_id }}"
         zone_id: ap-southeast-1a
         cidr_block: 172.16.1.0/24
       register: subnet
 
-    - byteplus.cloud.byteplus_security_group:
+    - fardani235.byteplus.byteplus_security_group:
         security_group_name: web-tier
         vpc_id: "{{ vpc.vpc.vpc_id }}"
         description: HTTPS in
       register: sg
 
-    - byteplus.cloud.byteplus_ecs_instance:
+    - fardani235.byteplus.byteplus_ecs_instance:
         instance_name: web-01
         zone_id: ap-southeast-1a
         image_id: image-ybvz29l3da0smmpnfb02
@@ -333,7 +333,7 @@ re-authorizes, which briefly disrupts matching traffic.
 
 ```yaml
 - name: Allow HTTPS in from anywhere
-  byteplus.cloud.byteplus_security_group_rule:
+  fardani235.byteplus.byteplus_security_group_rule:
     security_group_id: "{{ sg.security_group.security_group_id }}"
     direction: ingress
     protocol: tcp
@@ -344,7 +344,7 @@ re-authorizes, which briefly disrupts matching traffic.
     description: Public HTTPS
 
 - name: Allow another SG to talk to us on a private port
-  byteplus.cloud.byteplus_security_group_rule:
+  fardani235.byteplus.byteplus_security_group_rule:
     security_group_id: sg-web
     direction: ingress
     protocol: tcp
@@ -354,7 +354,7 @@ re-authorizes, which briefly disrupts matching traffic.
     policy: accept
 
 - name: Revoke an old rule
-  byteplus.cloud.byteplus_security_group_rule:
+  fardani235.byteplus.byteplus_security_group_rule:
     security_group_id: "{{ sg.security_group.security_group_id }}"
     direction: ingress
     protocol: tcp
@@ -378,7 +378,7 @@ absent from your `entries:` list (i.e. reconcile to exactly your set).
 ```yaml
 - name: Create a whitelist prefix list and reference it from an SG rule
   block:
-    - byteplus.cloud.byteplus_prefix_list:
+    - fardani235.byteplus.byteplus_prefix_list:
         prefix_list_name: office-egress
         description: Corporate egress IPs
         max_entries: 50
@@ -390,7 +390,7 @@ absent from your `entries:` list (i.e. reconcile to exactly your set).
             description: Branch Tokyo
       register: pl
 
-    - byteplus.cloud.byteplus_security_group_rule:
+    - fardani235.byteplus.byteplus_security_group_rule:
         security_group_id: "{{ sg.security_group.security_group_id }}"
         direction: ingress
         protocol: tcp

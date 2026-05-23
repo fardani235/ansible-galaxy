@@ -21,9 +21,9 @@ tags:
   - prefixlist
   - infrastructure
 dependencies: {}
-repository: https://github.com/fardani235/ansible-galaxy/tree/main/byteplus
+repository: https://github.com/fardani235/ansible-galaxy
 homepage: https://github.com/fardani235/ansible-galaxy/tree/main/byteplus
-issues: https://github.com/fardani235/ansible-galaxy/tree/main/byteplus/issues
+issues: https://github.com/fardani235/ansible-galaxy/issues
 build_ignore:
   - .git
   - .github

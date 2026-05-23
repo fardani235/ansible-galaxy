@@ -23,14 +23,14 @@ def _stub_imports():
     for name in [
         'ansible_collections',
         'ansible_collections.byteplus',
-        'ansible_collections.byteplus.cloud',
-        'ansible_collections.byteplus.cloud.plugins',
-        'ansible_collections.byteplus.cloud.plugins.module_utils',
+        'ansible_collections.fardani235.byteplus',
+        'ansible_collections.fardani235.byteplus.plugins',
+        'ansible_collections.fardani235.byteplus.plugins.module_utils',
     ]:
         sys.modules.setdefault(name, types.ModuleType(name))
 
     vpc_common_stub = types.ModuleType(
-        'ansible_collections.byteplus.cloud.plugins.module_utils.vpc_common')
+        'ansible_collections.fardani235.byteplus.plugins.module_utils.vpc_common')
 
     class _Client:
         def __init__(self, *_a, **_kw):
@@ -41,7 +41,7 @@ def _stub_imports():
     vpc_common_stub.resolve_credentials = lambda module: (
         'AK', 'SK', 'ap-southeast-1', None)
     sys.modules[
-        'ansible_collections.byteplus.cloud.plugins.module_utils.vpc_common'
+        'ansible_collections.fardani235.byteplus.plugins.module_utils.vpc_common'
     ] = vpc_common_stub
 
 
