@@ -221,7 +221,7 @@ be unique — the module fails closed if a name matches multiple instances).
     subnet_id: subnet-abcdefg
     security_group_ids: [sg-1234567]
     key_pair_name: my-keypair
-    state: started
+    state: present
 
 - name: Stop an instance
   fardani235.byteplus.byteplus_ecs_instance:
