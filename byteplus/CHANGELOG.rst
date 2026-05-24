@@ -4,6 +4,36 @@ fardani235.byteplus Release Notes
 
 .. contents:: Topics
 
+v1.1.0
+======
+
+Minor Changes
+-------------
+
+- Add ``byteplus_ecs_snapshot`` module - create/delete a snapshot of a
+  single BytePlus EBS volume. Supports check mode, idempotent lookup
+  by ``snapshot_id`` or ``snapshot_name``, retention days, project
+  scoping, tags, and wait-for-available.
+- Add ``byteplus_ecs_snapshot_group`` module - manage instance-wide,
+  multi-volume snapshot groups (the canonical "instance snapshot"
+  flow). Supports ``state=present``, ``absent``, and ``rolled_back``.
+  Rollback is strict: it fails fast if the target instance is not
+  already in the ``STOPPED`` state, rather than silently powering off
+  a running workload. When ``volume_ids`` is omitted, the module
+  discovers every volume attached to the instance and includes them
+  all, because the BytePlus ``CreateSnapshotGroup`` server rejects
+  requests without a populated ``VolumeIds`` (despite the SDK marking
+  the field optional).
+- Add ``byteplus_ecs_snapshot_info`` module - read-only listing of EBS
+  snapshots and snapshot groups, with ``kind`` selecting which
+  endpoint to query. Pagination is handled automatically.
+- Add ``snapshot_common`` module_utils with ``SnapshotClient`` wrapping
+  ``byteplussdkstorageebs.STORAGEEBSApi``, plus paginated describe
+  helpers (``describe_all_snapshots`` follows ``NextToken``,
+  ``describe_all_snapshot_groups`` follows ``PageNumber``) and
+  wait-for-state polling tuned for the long create times typical of
+  large EBS volumes.
+
 v1.0.2
 ======
 

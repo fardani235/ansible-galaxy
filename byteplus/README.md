@@ -268,6 +268,72 @@ Read-only listing/describe with automatic pagination.
     msg: "Found {{ ecs_info.count }} running instances"
 ```
 
+### byteplus_ecs_snapshot / byteplus_ecs_snapshot_group / byteplus_ecs_snapshot_info
+
+Create, delete, and list BytePlus EBS snapshots.
+
+Two flavors are exposed, matching the underlying BytePlus API:
+
+- **`byteplus_ecs_snapshot`** — point-in-time snapshot of a single
+  EBS volume. Identified by `snapshot_id` or `snapshot_name`.
+- **`byteplus_ecs_snapshot_group`** — atomic snapshot covering every
+  volume attached to an ECS instance (the conventional "instance
+  snapshot"). Identified by `snapshot_group_id` or `name`. Also
+  supports `state: rolled_back` to restore an instance from a group
+  snapshot.
+- **`byteplus_ecs_snapshot_info`** — read-only listing of either kind,
+  selected via the `kind` parameter.
+
+```yaml
+- name: Snapshot a single data volume
+  fardani235.byteplus.byteplus_ecs_snapshot:
+    snapshot_name: db-data-2026-05-24
+    volume_id: vol-yb1111
+    description: Pre-upgrade snapshot
+    retention_days: 7
+    state: present
+
+- name: Take a full instance snapshot (every attached volume)
+  fardani235.byteplus.byteplus_ecs_snapshot_group:
+    name: web-01-2026-05-24
+    instance_id: i-ybw0lke12345
+    description: Pre-deploy snapshot
+    tags:
+      - key: purpose
+        value: pre-deploy
+    state: present
+
+- name: List snapshot groups for an instance
+  fardani235.byteplus.byteplus_ecs_snapshot_info:
+    kind: snapshot_group
+    instance_id: i-ybw0lke12345
+  register: groups
+```
+
+Rollback is **strict by design**: BytePlus requires the instance to
+be in the `STOPPED` state before `RollbackSnapshotGroup` succeeds, and
+this module refuses to proceed when the instance is in any other
+state rather than silently powering it off. Orchestrate the stop
+explicitly:
+
+```yaml
+- name: Stop the instance first
+  fardani235.byteplus.byteplus_ecs_instance:
+    instance_id: i-ybw0lke12345
+    state: stopped
+
+- name: Then roll back
+  fardani235.byteplus.byteplus_ecs_snapshot_group:
+    snapshot_group_id: snap-grp-yb0123456789
+    instance_id: i-ybw0lke12345
+    state: rolled_back
+```
+
+The default `wait_timeout` for snapshot creation is 30 minutes —
+large data disks routinely take several minutes to reach
+`available`. Override `wait_timeout` if your volumes are small and
+you want faster feedback.
+
 ### byteplus_vpc / byteplus_subnet / byteplus_security_group
 
 Manage VPC networking primitives. All three share a common pattern:
