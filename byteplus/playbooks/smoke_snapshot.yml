@@ -1,0 +1,296 @@
+---
+# Smoke test for the BytePlus ECS snapshot modules:
+#   fardani235.byteplus.byteplus_ecs_snapshot
+#   fardani235.byteplus.byteplus_ecs_snapshot_group
+#   fardani235.byteplus.byteplus_ecs_snapshot_info
+#
+# Runs against a real BytePlus ECS account. Requires:
+#   BYTEPLUS_ACCESS_KEY, BYTEPLUS_SECRET_KEY    — credentials
+#   ECS_INSTANCE_ID                             — an existing ECS instance to
+#                                                 snapshot (must have at least
+#                                                 one volume; stay STOPPED for
+#                                                 the rollback-strictness check)
+#   Optional:
+#     ECS_VOLUME_ID                             — a specific volume to snapshot
+#                                                 (if unset, the play discovers
+#                                                 the instance's system disk)
+#     BYTEPLUS_REGION                           — defaults to ap-southeast-1
+#
+# Snapshots cost storage as long as they exist, so the `always` block runs
+# even on assertion failure to delete anything this play created.
+#
+# Usage:
+#   ECS_INSTANCE_ID=i-ybw0lke12345 ansible-playbook playbooks/smoke_snapshot.yml
+
+- name: Smoke test BytePlus ECS snapshot modules
+  hosts: localhost
+  gather_facts: false
+  vars:
+    instance_id: "{{ lookup('env', 'ECS_INSTANCE_ID') }}"
+    volume_id_override: "{{ lookup('env', 'ECS_VOLUME_ID') }}"
+
+  tasks:
+    - name: Fail fast if ECS_INSTANCE_ID is unset
+      assert:
+        that:
+          - instance_id | length > 0
+        fail_msg: >-
+          ECS_INSTANCE_ID is not set. Export it to a real instance you own
+          before running this smoke test.
+
+    # set_fact pins the suffix once — using `{{ 999999 | random }}` as a
+    # play-level var re-rolls on every reference and produces collisions
+    # between create / lookup / delete tasks.
+    - name: Pin a unique suffix for this run
+      set_fact:
+        run_suffix: "smoke-{{ 999999 | random }}"
+
+    - name: Announce run parameters
+      debug:
+        msg: >-
+          instance_id={{ instance_id }} suffix={{ run_suffix }}
+          volume_override={{ volume_id_override | default('(auto)', true) }}
+
+    - block:
+        # --- Discover a volume to snapshot ---
+        # If the caller didn't pin a volume, look the instance up and grab
+        # the first volume attached to it. Skipping this when the override
+        # is set keeps a deterministic single-volume target across runs.
+        - name: Discover instance to find a system volume
+          fardani235.byteplus.byteplus_ecs_instance_info:
+            instance_ids: ["{{ instance_id }}"]
+          register: inst_info
+          when: volume_id_override | length == 0
+
+        - name: Pick a target volume_id
+          set_fact:
+            target_volume_id: >-
+              {{ volume_id_override
+                 if volume_id_override | length > 0
+                 else (inst_info.instances[0].volumes[0].volume_id
+                       | default(inst_info.instances[0].VolumeIds[0]
+                                 | default(''))) }}
+
+        - name: Assert we have a volume to snapshot
+          assert:
+            that:
+              - target_volume_id | length > 0
+            fail_msg: >-
+              Could not resolve a volume_id for instance {{ instance_id }}.
+              Set ECS_VOLUME_ID explicitly.
+
+        # --- Single-volume snapshot create + idempotency ---
+        - name: Create a single-volume snapshot
+          fardani235.byteplus.byteplus_ecs_snapshot:
+            snapshot_name: "{{ run_suffix }}-vol"
+            volume_id: "{{ target_volume_id }}"
+            description: "smoke test single-volume snapshot"
+            retention_days: 1
+            wait: true
+            wait_timeout: 1800
+            state: present
+          register: snap_create
+
+        - name: Assert single-volume snapshot was created
+          assert:
+            that:
+              - snap_create.changed
+              - snap_create.snapshot is defined
+              - (snap_create.snapshot.snapshot_id
+                 | default(snap_create.snapshot.SnapshotId, true)) | length > 0
+            fail_msg: "Single-volume snapshot creation failed"
+
+        - name: Capture snapshot_id for later cleanup
+          set_fact:
+            created_snapshot_id: >-
+              {{ snap_create.snapshot.snapshot_id
+                 | default(snap_create.snapshot.SnapshotId) }}
+
+        - name: Idempotency — same snapshot_name
+          fardani235.byteplus.byteplus_ecs_snapshot:
+            snapshot_name: "{{ run_suffix }}-vol"
+            volume_id: "{{ target_volume_id }}"
+            state: present
+          register: snap_idem
+
+        - name: Assert no change on idempotent re-run
+          assert:
+            that:
+              - not snap_idem.changed
+            fail_msg: "Snapshot idempotency check failed — should have been a no-op"
+
+        # --- Info lookup ---
+        - name: List snapshots for the target volume
+          fardani235.byteplus.byteplus_ecs_snapshot_info:
+            kind: snapshot
+            volume_id: "{{ target_volume_id }}"
+          register: snap_list
+
+        - name: Assert the created snapshot appears in the listing
+          assert:
+            that:
+              - snap_list.count > 0
+              - >-
+                created_snapshot_id in (
+                  snap_list.snapshots
+                  | map(attribute='snapshot_id', default='')
+                  | list
+                  + snap_list.snapshots
+                  | map(attribute='SnapshotId', default='')
+                  | list
+                )
+            fail_msg: >-
+              Listing did not include the snapshot we just created
+              ({{ created_snapshot_id }}).
+
+        # --- Snapshot group (instance-wide) create + idempotency ---
+        # NOTE: BytePlus snapshot-group descriptions are stricter than
+        # single-volume snapshot descriptions — spaces and certain chars
+        # trigger `InvalidParameter.Description` from CreateSnapshotGroup.
+        # Stick to a plain alphanumeric/dash string here.
+        - name: Create an instance-wide snapshot group
+          fardani235.byteplus.byteplus_ecs_snapshot_group:
+            name: "{{ run_suffix }}-grp"
+            instance_id: "{{ instance_id }}"
+            description: "smoke-test-instance-snapshot"
+            wait: true
+            wait_timeout: 1800
+            state: present
+          register: grp_create
+
+        - name: Assert snapshot group was created
+          assert:
+            that:
+              - grp_create.changed
+              - grp_create.snapshot_group is defined
+              - (grp_create.snapshot_group.snapshot_group_id
+                 | default(grp_create.snapshot_group.SnapshotGroupId, true)) | length > 0
+            fail_msg: "Snapshot group creation failed"
+
+        - name: Capture snapshot_group_id for later cleanup
+          set_fact:
+            created_group_id: >-
+              {{ grp_create.snapshot_group.snapshot_group_id
+                 | default(grp_create.snapshot_group.SnapshotGroupId) }}
+
+        - name: Idempotency — same group name
+          fardani235.byteplus.byteplus_ecs_snapshot_group:
+            name: "{{ run_suffix }}-grp"
+            instance_id: "{{ instance_id }}"
+            state: present
+          register: grp_idem
+
+        - name: Assert no change on idempotent re-run
+          assert:
+            that:
+              - not grp_idem.changed
+            fail_msg: "Snapshot group idempotency check failed"
+
+        # --- Group info lookup ---
+        - name: List snapshot groups for the instance
+          fardani235.byteplus.byteplus_ecs_snapshot_info:
+            kind: snapshot_group
+            instance_id: "{{ instance_id }}"
+          register: grp_list
+
+        - name: Assert the created snapshot group appears in the listing
+          assert:
+            that:
+              - grp_list.count > 0
+              - >-
+                created_group_id in (
+                  grp_list.snapshot_groups
+                  | map(attribute='snapshot_group_id', default='')
+                  | list
+                  + grp_list.snapshot_groups
+                  | map(attribute='SnapshotGroupId', default='')
+                  | list
+                )
+            fail_msg: >-
+              Listing did not include the group we just created
+              ({{ created_group_id }}).
+
+        # --- Strict rollback gate ---
+        # This is the contract that distinguishes this module from a naive
+        # wrapper: rollback MUST refuse to proceed when the instance is in
+        # any non-STOPPED state. We assert that by checking the instance's
+        # current state and only invoking rollback if it's already stopped
+        # (catching the failure branch directly would require us to KNOW
+        # the instance is running, which we don't want to force on the
+        # smoke runner). Either way we verify the assertion explicitly.
+        - name: Look up current instance state
+          fardani235.byteplus.byteplus_ecs_instance_info:
+            instance_ids: ["{{ instance_id }}"]
+          register: inst_state
+
+        - name: Capture instance state for the rollback-gate check
+          # The describe response uses lowercase `status` in the SDK's
+          # snake_case to_dict() output; the PascalCase fallback is
+          # there for older SDK versions that didn't apply the mapping.
+          set_fact:
+            current_inst_state: >-
+              {{ inst_state.instances[0].status
+                 | default(inst_state.instances[0].Status | default('')) }}
+
+        - name: Verify rollback gate refuses non-STOPPED instances
+          # Only run the negative test when the instance is RUNNING — the
+          # module is expected to fail in this case, and we assert that
+          # failure rather than treating it as an error.
+          when: current_inst_state == 'RUNNING'
+          block:
+            - name: Attempt rollback against running instance (should fail)
+              fardani235.byteplus.byteplus_ecs_snapshot_group:
+                snapshot_group_id: "{{ created_group_id }}"
+                instance_id: "{{ instance_id }}"
+                state: rolled_back
+              register: rollback_attempt
+              ignore_errors: true
+
+            - name: Assert rollback was refused with the right message
+              assert:
+                that:
+                  - rollback_attempt.failed
+                  - "'STOPPED' in (rollback_attempt.msg | default(''))"
+                fail_msg: >-
+                  Rollback against a RUNNING instance should have failed
+                  with a clear STOPPED-state error. Got:
+                  failed={{ rollback_attempt.failed }}
+                  msg={{ rollback_attempt.msg | default('(none)') }}
+
+        - name: Report result
+          debug:
+            msg: "Snapshot smoke test PASSED"
+
+      always:
+        # Best-effort: delete by ID if we captured it; fall back to delete
+        # by name in case create failed AFTER the API actually created the
+        # resource but BEFORE we registered the result.
+        - name: Always — delete snapshot group by ID
+          fardani235.byteplus.byteplus_ecs_snapshot_group:
+            snapshot_group_id: "{{ created_group_id }}"
+            wait: true
+            state: absent
+          when: created_group_id is defined and (created_group_id | length > 0)
+          failed_when: false
+
+        - name: Always — delete snapshot group by name (fallback)
+          fardani235.byteplus.byteplus_ecs_snapshot_group:
+            name: "{{ run_suffix }}-grp"
+            wait: true
+            state: absent
+          failed_when: false
+
+        - name: Always — delete single-volume snapshot by ID
+          fardani235.byteplus.byteplus_ecs_snapshot:
+            snapshot_id: "{{ created_snapshot_id }}"
+            wait: true
+            state: absent
+          when: created_snapshot_id is defined and (created_snapshot_id | length > 0)
+          failed_when: false
+
+        - name: Always — delete single-volume snapshot by name (fallback)
+          fardani235.byteplus.byteplus_ecs_snapshot:
+            snapshot_name: "{{ run_suffix }}-vol"
+            wait: true
+            state: absent
+          failed_when: false

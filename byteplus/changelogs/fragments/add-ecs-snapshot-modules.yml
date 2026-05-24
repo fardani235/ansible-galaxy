@@ -1,0 +1,24 @@
+minor_changes:
+  - >
+    Add C(byteplus_ecs_snapshot) module — create/delete a snapshot of a
+    single BytePlus EBS volume. Supports check mode, idempotent lookup
+    by C(snapshot_id) or C(snapshot_name), retention days, project
+    scoping, tags, and wait-for-available.
+  - >
+    Add C(byteplus_ecs_snapshot_group) module — manage instance-wide,
+    multi-volume snapshot groups (the canonical "instance snapshot"
+    flow). Supports C(state=present), C(absent), and C(rolled_back).
+    Rollback is strict: it fails fast if the target instance is not
+    already in the C(STOPPED) state, rather than silently powering off
+    a running workload.
+  - >
+    Add C(byteplus_ecs_snapshot_info) module — read-only listing of EBS
+    snapshots and snapshot groups, with O(kind) selecting which
+    endpoint to query. Pagination is handled automatically.
+  - >
+    Add C(snapshot_common) module_utils with C(SnapshotClient) wrapping
+    C(byteplussdkstorageebs.STORAGEEBSApi), plus paginated describe
+    helpers (C(describe_all_snapshots) follows C(NextToken),
+    C(describe_all_snapshot_groups) follows C(PageNumber)) and
+    wait-for-state polling tuned for the long create times typical of
+    large EBS volumes.
