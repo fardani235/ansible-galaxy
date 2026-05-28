@@ -307,6 +307,11 @@ class TestApiExceptionClassification:
         ('PolicyNotExist', 'policy'),
         ('AccessKeyNotExist', 'access key'),
         ('LoginProfileNotExist', 'login profile'),
+        # 'RecordNotFound' is the code BytePlus IAM returns from
+        # DeleteLoginProfile when the profile doesn't exist (observed
+        # live via smoke_iam.yml). It does NOT contain 'NotExist', so
+        # the classifier must match 'NotFound' too.
+        ('RecordNotFound', 'login profile'),
     ])
     def test_byteplus_notexist_codes_map_to_notfound(self, code, resource):
         client = _make_client()
