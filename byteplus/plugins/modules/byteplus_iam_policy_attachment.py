@@ -111,6 +111,7 @@ from ansible.module_utils.basic import AnsibleModule, env_fallback
 from ansible_collections.fardani235.byteplus.plugins.module_utils.iam_common import (
     IAMClient,
     IAMError,
+    IAMNotFound,
 )
 
 
@@ -118,11 +119,20 @@ def is_attached(client, policy_name, policy_type, target_type, target_name):
     """Return True iff (policy_name, policy_type) is currently attached
     to (target_type, target_name). Matching is exact on both fields —
     the same policy_name can exist under both Custom and System scopes,
-    so PolicyType is part of the identity."""
-    if target_type == 'user':
-        attached = client.list_attached_user_policies(target_name)
-    else:
-        attached = client.list_attached_role_policies(target_name)
+    so PolicyType is part of the identity.
+
+    If the target user / role itself does not exist, returns False
+    rather than raising — the answer to "is X attached to a
+    nonexistent target" is unambiguously "no", and treating it as such
+    lets the cleanup `always:` block in smoke_iam.yml no-op cleanly when
+    the target was already torn down (or never created)."""
+    try:
+        if target_type == 'user':
+            attached = client.list_attached_user_policies(target_name)
+        else:
+            attached = client.list_attached_role_policies(target_name)
+    except IAMNotFound:
+        return False
     for a in attached or []:
         if (a.get('PolicyName') == policy_name
                 and a.get('PolicyType') == policy_type):

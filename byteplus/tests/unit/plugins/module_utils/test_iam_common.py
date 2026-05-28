@@ -152,12 +152,12 @@ def _make_client(**overrides):
 
 
 def _api_error(action, code, message='boom', request_id='req-XYZ'):
-    """Build a do_call return that simulates a BytePlus error envelope.
+    """Build a do_call return that simulates a BytePlus error envelope
+    surfaced INLINE on a 200-OK response.
 
-    The real envelope is {'ResponseMetadata': {'Error': {...},
-    'RequestId': '...'}}. UniversalApi returns this verbatim as a dict
-    on error — it does NOT raise. iam_common must inspect the envelope
-    and raise the right error class.
+    Some BytePlus services do this — the HTTP status is 200 but
+    ResponseMetadata.Error is populated. iam_common must inspect the
+    envelope and raise the right error class.
     """
     return {
         'ResponseMetadata': {
@@ -166,6 +166,24 @@ def _api_error(action, code, message='boom', request_id='req-XYZ'):
             'Error': {'Code': code, 'Message': message},
         },
     }
+
+
+def _api_exception(code, message='boom', request_id='req-XYZ', status=400):
+    """Build the ApiException UniversalApi actually raises on HTTP
+    non-2xx — which is the path the BytePlus IAM endpoint takes in
+    practice (smoke_iam.yml proved this empirically).
+
+    The body is a JSON string carrying the same ResponseMetadata.Error
+    envelope; the structured error code lives there, not in `reason`
+    (which is just the HTTP status text, e.g. "Not Found").
+    """
+    body = json.dumps({
+        'ResponseMetadata': {
+            'RequestId': request_id,
+            'Error': {'Code': code, 'Message': message},
+        },
+    })
+    return iam.ApiException(status=status, reason='boom-reason', body=body)
 
 
 class TestErrorClassification:
@@ -206,6 +224,77 @@ class TestErrorClassification:
         assert 'req-XYZ' in str(exc_info.value)
         assert 'bad name' in str(exc_info.value)
         assert 'CreateUser' in str(exc_info.value)
+
+
+class TestApiExceptionClassification:
+    """The IAM endpoint surfaces structured errors via ApiException
+    (HTTP non-2xx with a JSON body) — NOT via a 200-OK envelope. This
+    was learned empirically from running smoke_iam.yml against a live
+    account: GetUser for a nonexistent name was raising IAMClientError
+    with code='ApiException' (the HTTP reason "Not Found") instead of
+    being recognized as the EntityDoesNotExist.User it actually is.
+
+    These tests pin the contract: _make_request must parse the body
+    of ApiException and route to the same error families it routes
+    the inline-envelope path through.
+    """
+
+    def test_not_found_via_apiexception_returns_none_on_get(self):
+        client = _make_client()
+        client.api.do_call = mock.Mock(side_effect=_api_exception(
+            'EntityDoesNotExist.User', 'user not found', status=404))
+        # Critical: this is the exact path smoke_iam.yml hit on a
+        # fresh smoke-iam-user-NNN that does not yet exist.
+        assert client.get_user('does-not-exist') is None
+
+    def test_not_found_via_apiexception_raises_notfound_on_write(self):
+        client = _make_client()
+        client.api.do_call = mock.Mock(side_effect=_api_exception(
+            'EntityDoesNotExist.User', 'user not found', status=404))
+        with pytest.raises(iam.IAMNotFound):
+            client.update_user('does-not-exist', display_name='X')
+
+    def test_already_exists_via_apiexception(self):
+        client = _make_client()
+        client.api.do_call = mock.Mock(side_effect=_api_exception(
+            'EntityAlreadyExists.User', 'already there', status=409))
+        with pytest.raises(iam.IAMAlreadyExists):
+            client.create_user('dup')
+
+    def test_other_error_via_apiexception_preserves_request_id(self):
+        client = _make_client()
+        client.api.do_call = mock.Mock(side_effect=_api_exception(
+            'InvalidParameter.PolicyDocument', 'malformed',
+            request_id='req-FROM-BODY', status=400))
+        with pytest.raises(iam.IAMClientError) as exc_info:
+            client.create_user('whatever')
+        msg = str(exc_info.value)
+        # request_id must come from the parsed body, not from the
+        # ApiException's HTTP-level metadata (where it isn't available).
+        assert 'req-FROM-BODY' in msg
+        assert 'InvalidParameter.PolicyDocument' in msg
+        assert 'malformed' in msg
+
+    def test_apiexception_with_unparseable_body_still_raises_cleanly(self):
+        # If the body isn't JSON (transport error, gateway-injected HTML,
+        # etc.) we can't extract a structured code — but we still
+        # shouldn't crash. Fall back to a generic IAMClientError with
+        # the HTTP reason text so the operator gets *something*.
+        client = _make_client()
+        client.api.do_call = mock.Mock(side_effect=iam.ApiException(
+            status=502, reason='Bad Gateway', body='<html>nope</html>'))
+        with pytest.raises(iam.IAMClientError) as exc_info:
+            client.create_user('whatever')
+        msg = str(exc_info.value)
+        assert 'Bad Gateway' in msg or '502' in msg
+
+    def test_apiexception_with_no_body(self):
+        # Some transport-level failures have body=None.
+        client = _make_client()
+        client.api.do_call = mock.Mock(side_effect=iam.ApiException(
+            status=500, reason='Internal Server Error', body=None))
+        with pytest.raises(iam.IAMClientError):
+            client.create_user('whatever')
 
 
 # ---------- paginator ----------
