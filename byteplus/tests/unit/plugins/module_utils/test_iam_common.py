@@ -329,6 +329,124 @@ class TestApiExceptionClassification:
             client.create_user('dup')
 
 
+class TestWireFormat:
+    """The BytePlus IAM endpoint expects parameters in the query string,
+    not in a JSON body — even for verbs that look like writes
+    (CreateUser, UpdateUser, etc.). UniversalApi only puts params in
+    the query string when info.method == 'GET' (see byteplussdkcore /
+    universal.py line 80-81: `if info.method.lower() == "get":
+    query_params = list(body.items())`). So every IAM verb must use
+    GET, regardless of CRUD semantics. POST was sending params in the
+    JSON body, and the server was rejecting them with
+    `ParameterNotFound: The parameter 'UserName' is required`.
+    """
+
+    def test_create_user_uses_get_method(self):
+        client = _make_client()
+        client.api.do_call = mock.Mock(return_value={'Result': {}})
+        client.create_user('alice')
+        info, _ = client.api.do_call.call_args.args
+        assert info.method == 'GET', (
+            "create_user must use GET so params go on the query string")
+
+    def test_update_user_uses_get_method(self):
+        client = _make_client()
+        client.api.do_call = mock.Mock(return_value={'Result': {}})
+        client.update_user('alice', display_name='Alice E.')
+        info, _ = client.api.do_call.call_args.args
+        assert info.method == 'GET'
+
+    def test_delete_user_uses_get_method(self):
+        client = _make_client()
+        client.api.do_call = mock.Mock(return_value={'Result': {}})
+        client.delete_user('alice')
+        info, _ = client.api.do_call.call_args.args
+        assert info.method == 'GET'
+
+    def test_create_policy_uses_get_method(self):
+        client = _make_client()
+        client.api.do_call = mock.Mock(return_value={'Result': {}})
+        client.create_policy('p1', '{}', description='x')
+        info, _ = client.api.do_call.call_args.args
+        assert info.method == 'GET'
+
+    def test_attach_user_policy_uses_get_method(self):
+        client = _make_client()
+        client.api.do_call = mock.Mock(return_value={'Result': {}})
+        client.attach_user_policy('p1', 'alice')
+        info, _ = client.api.do_call.call_args.args
+        assert info.method == 'GET'
+
+    def test_create_access_key_uses_get_method(self):
+        # CreateAccessKey is the most write-y verb — generates a
+        # brand new credential — and even it must use GET on this API.
+        client = _make_client()
+        client.api.do_call = mock.Mock(return_value={'Result': {}})
+        client.create_access_key(user_name='alice')
+        info, _ = client.api.do_call.call_args.args
+        assert info.method == 'GET'
+
+
+class TestEntityUnwrap:
+    """BytePlus IAM's get_* and create_* responses wrap the entity under
+    a singular type-named key: GetUser returns {'User': {...}},
+    GetPolicy returns {'Policy': {...}}, GetRole returns {'Role': {...}}.
+    list_* responses, on the other hand, contain bare entity dicts under
+    UserMetadata / PolicyMetadata / RoleMetadata arrays — no per-entity
+    wrap.
+
+    That asymmetry is awkward at the call site (modules constantly
+    forget which shape they're holding). Unwrap inside IAMClient so
+    every caller — info modules included — sees bare entity dicts.
+    """
+
+    def test_get_user_unwraps_user_envelope(self):
+        client = _make_client()
+        # Simulate the real response shape observed live: top-level
+        # 'User' key under Result (which _make_request returns).
+        client.api.do_call = mock.Mock(return_value={
+            'Result': {'User': {'UserName': 'alice', 'DisplayName': 'A'}},
+        })
+        user = client.get_user('alice')
+        assert user == {'UserName': 'alice', 'DisplayName': 'A'}
+
+    def test_get_policy_unwraps_policy_envelope(self):
+        client = _make_client()
+        client.api.do_call = mock.Mock(return_value={
+            'Result': {'Policy': {'PolicyName': 'p1',
+                                  'PolicyDocument': '{}'}},
+        })
+        policy = client.get_policy('p1')
+        assert policy == {'PolicyName': 'p1', 'PolicyDocument': '{}'}
+
+    def test_get_role_unwraps_role_envelope(self):
+        client = _make_client()
+        client.api.do_call = mock.Mock(return_value={
+            'Result': {'Role': {'RoleName': 'r1'}},
+        })
+        role = client.get_role('r1')
+        assert role == {'RoleName': 'r1'}
+
+    def test_get_login_profile_unwraps_login_profile_envelope(self):
+        client = _make_client()
+        client.api.do_call = mock.Mock(return_value={
+            'Result': {'LoginProfile': {'UserName': 'alice',
+                                        'LoginAllowed': True}},
+        })
+        prof = client.get_login_profile('alice')
+        assert prof == {'UserName': 'alice', 'LoginAllowed': True}
+
+    def test_get_user_bare_response_still_works(self):
+        # Defensive: if a future SDK rev or BytePlus change drops the
+        # wrapper, the unwrap helper must fall back to the bare dict.
+        client = _make_client()
+        client.api.do_call = mock.Mock(return_value={
+            'Result': {'UserName': 'alice', 'DisplayName': 'A'},
+        })
+        user = client.get_user('alice')
+        assert user == {'UserName': 'alice', 'DisplayName': 'A'}
+
+
 # ---------- paginator ----------
 
 

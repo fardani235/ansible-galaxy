@@ -94,6 +94,24 @@ def _is_already_exists(code):
 # ---------------------------------------------------------------------------
 
 
+def _unwrap_entity(resp, key):
+    """Pull `key` out of `resp` if present, else return `resp`.
+
+    BytePlus IAM's get_* responses wrap the entity dict under a
+    singular type-named key (e.g. GetUser returns {'User': {...}},
+    GetPolicy returns {'Policy': {...}}). list_* responses, by
+    contrast, contain bare dicts inside *Metadata arrays. We unwrap on
+    the get_* side so every IAMClient consumer holds the same shape.
+
+    The defensive fallback (return resp itself) covers the case where
+    the wrapper disappears in a future API revision — we don't want
+    to silently start returning None then.
+    """
+    if isinstance(resp, dict) and key in resp and isinstance(resp[key], dict):
+        return resp[key]
+    return resp
+
+
 def canonicalize_policy_document(doc):
     """Return a canonical string form of a policy / trust-policy document.
 
@@ -146,8 +164,26 @@ class IAMClient(object):
 
     # ----- transport -----
 
-    def _make_request(self, action, params=None, method='POST'):
+    def _make_request(self, action, params=None, method='GET'):
         """Dispatch one BytePlus IAM action and classify the response.
+
+        IMPORTANT: every BytePlus IAM verb is GET-with-query-string,
+        even ones whose names suggest a write (CreateUser, UpdateUser,
+        AttachUserPolicy, DeleteRole, ...). That is non-obvious. Why:
+
+        * UniversalApi (byteplussdkcore/universal.py) only copies the
+          `body` dict into the request's query string when
+          `info.method.lower() == 'get'`. On any other method, the
+          dict goes into the request body as JSON.
+        * The BytePlus IAM service rejects body parameters outright
+          with `ParameterNotFound: The parameter '<X>' is required`.
+          (Verified live: CreateUser with method='POST' returned that
+          error; switching to method='GET' on the same params returned
+          the expected User payload.)
+
+        So `method='GET'` is the universal default here, and the
+        `method` kwarg only exists so a future contributor can override
+        it if a specific IAM verb ever needs POST semantics (none today).
 
         The BytePlus IAM endpoint surfaces structured errors via
         ApiException (HTTP non-2xx + JSON body) — NOT via a 200-OK
@@ -157,6 +193,9 @@ class IAMClient(object):
 
         We never log `params` here — see the file-level docstring.
         """
+        # IAM GETs send params as query string; Content-Type is just
+        # the envelope hint for any body we'd send. text/plain matches
+        # what byteplus_common.BytePlusClient does for its GETs.
         content_type = (
             'application/json' if method == 'POST' else 'text/plain')
         info = UniversalInfo(
@@ -291,10 +330,11 @@ class IAMClient(object):
     def get_user(self, user_name):
         """Return the user dict, or None if it doesn't exist."""
         try:
-            return self._make_request(
+            resp = self._make_request(
                 'GetUser', {'UserName': user_name}, method='GET')
         except IAMNotFound:
             return None
+        return _unwrap_entity(resp, 'User')
 
     def update_user(self, user_name, new_user_name=None, display_name=None,
                     description=None, email=None, mobile_phone=None):
@@ -322,10 +362,11 @@ class IAMClient(object):
 
     def get_login_profile(self, user_name):
         try:
-            return self._make_request(
+            resp = self._make_request(
                 'GetLoginProfile', {'UserName': user_name}, method='GET')
         except IAMNotFound:
             return None
+        return _unwrap_entity(resp, 'LoginProfile')
 
     def create_login_profile(self, user_name, password,
                              password_reset_required=True,
@@ -398,12 +439,13 @@ class IAMClient(object):
 
     def get_policy(self, policy_name, policy_type='Custom'):
         try:
-            return self._make_request(
+            resp = self._make_request(
                 'GetPolicy',
                 {'PolicyName': policy_name, 'PolicyType': policy_type},
                 method='GET')
         except IAMNotFound:
             return None
+        return _unwrap_entity(resp, 'Policy')
 
     def update_policy(self, policy_name, policy_document=None,
                       description=None):
@@ -503,10 +545,11 @@ class IAMClient(object):
 
     def get_role(self, role_name):
         try:
-            return self._make_request(
+            resp = self._make_request(
                 'GetRole', {'RoleName': role_name}, method='GET')
         except IAMNotFound:
             return None
+        return _unwrap_entity(resp, 'Role')
 
     def update_role(self, role_name, trust_policy_document=None,
                     description=None, max_session_duration=None):
