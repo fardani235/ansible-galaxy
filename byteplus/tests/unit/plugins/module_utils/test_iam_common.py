@@ -436,10 +436,43 @@ class TestEntityUnwrap:
         client = _make_client()
         client.api.do_call = mock.Mock(return_value={
             'Result': {'LoginProfile': {'UserName': 'alice',
-                                        'LoginAllowed': True}},
+                                        'LoginAllowed': True,
+                                        'CreateDate': '20260528T112222Z'}},
         })
         prof = client.get_login_profile('alice')
-        assert prof == {'UserName': 'alice', 'LoginAllowed': True}
+        assert prof == {'UserName': 'alice', 'LoginAllowed': True,
+                        'CreateDate': '20260528T112222Z'}
+
+    def test_get_login_profile_treats_epoch_stub_as_missing(self):
+        # CRITICAL CONTRACT (learned live via smoke_iam.yml):
+        # BytePlus IAM's GetLoginProfile does NOT return
+        # LoginProfileNotExist for users who have no profile. It
+        # returns a STUB dict with CreateDate='19700101T000000Z'
+        # (the Unix epoch). Treating that stub as "exists" sends
+        # byteplus_iam_login_profile down the UpdateLoginProfile path,
+        # which then fails server-side with LoginProfileNotExist.
+        # get_login_profile must return None on the stub so the
+        # module hits CreateLoginProfile instead.
+        client = _make_client()
+        client.api.do_call = mock.Mock(return_value={
+            'Result': {'LoginProfile': {'UserName': 'alice',
+                                        'LoginAllowed': False,
+                                        'CreateDate': '19700101T000000Z'}},
+        })
+        assert client.get_login_profile('alice') is None
+
+    def test_get_login_profile_treats_0001_stub_as_missing(self):
+        # Some BytePlus responses (the CreateLoginProfile return value
+        # itself, on the same call where the profile was just created)
+        # use '00010101T000000Z' as another epoch-like marker. We
+        # treat any CreateDate starting with '0001' the same way as
+        # '1970' — both mean "no real timestamp here".
+        client = _make_client()
+        client.api.do_call = mock.Mock(return_value={
+            'Result': {'LoginProfile': {'UserName': 'alice',
+                                        'CreateDate': '00010101T000000Z'}},
+        })
+        assert client.get_login_profile('alice') is None
 
     def test_get_user_bare_response_still_works(self):
         # Defensive: if a future SDK rev or BytePlus change drops the
