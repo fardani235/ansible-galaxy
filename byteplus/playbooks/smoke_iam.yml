@@ -1,0 +1,398 @@
+---
+# Smoke test for the BytePlus IAM modules.
+#   fardani235.byteplus.byteplus_iam_user
+#   fardani235.byteplus.byteplus_iam_user_info
+#   fardani235.byteplus.byteplus_iam_login_profile
+#   fardani235.byteplus.byteplus_iam_access_key
+#   fardani235.byteplus.byteplus_iam_policy
+#   fardani235.byteplus.byteplus_iam_policy_info
+#   fardani235.byteplus.byteplus_iam_policy_attachment
+#   fardani235.byteplus.byteplus_iam_role
+#   fardani235.byteplus.byteplus_iam_role_info
+#
+# Runs against a real BytePlus account. Requires:
+#   BYTEPLUS_ACCESS_KEY, BYTEPLUS_SECRET_KEY    — credentials with IAM
+#                                                 admin permissions
+#   Optional:
+#     BYTEPLUS_REGION                           — defaults to ap-southeast-1
+#
+# IAM identities cost nothing but pollute the account, so the `always`
+# block tears every resource down even on assertion failure.
+#
+# Usage:
+#   ansible-playbook playbooks/smoke_iam.yml
+
+- name: Smoke test BytePlus IAM modules
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Pin a single suffix so create / lookup / delete all see the same
+    # name. {{ 999999 | random }} re-rolls on every reference.
+    suffix_seed: "{{ 999999 | random }}"
+    user_name: "smoke-iam-user-{{ suffix_seed }}"
+    policy_name: "smoke-iam-pol-{{ suffix_seed }}"
+    role_name: "smoke-iam-role-{{ suffix_seed }}"
+    # 32-byte alphanumeric, generated once per run. Used only to create
+    # the login profile so we can exercise update / delete paths.
+    login_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+
+  tasks:
+    - name: Announce run parameters
+      debug:
+        msg: >-
+          user={{ user_name }} policy={{ policy_name }} role={{ role_name }}
+
+    - block:
+        # --- User create + idempotency ---
+        - name: Create IAM user
+          fardani235.byteplus.byteplus_iam_user:
+            user_name: "{{ user_name }}"
+            display_name: "smoke user"
+            description: "created by smoke_iam.yml"
+            state: present
+          register: user_create
+
+        - name: Assert user created
+          assert:
+            that:
+              - user_create.changed
+              - user_create.user is defined
+              - user_create.user.UserName == user_name
+            fail_msg: "User creation failed: {{ user_create }}"
+
+        - name: Idempotency — same user
+          fardani235.byteplus.byteplus_iam_user:
+            user_name: "{{ user_name }}"
+            display_name: "smoke user"
+            description: "created by smoke_iam.yml"
+            state: present
+          register: user_idem
+
+        - name: Assert no change on idempotent re-run
+          assert:
+            that:
+              - not user_idem.changed
+            fail_msg: "User idempotency check failed"
+
+        - name: Drift detection — change display_name
+          fardani235.byteplus.byteplus_iam_user:
+            user_name: "{{ user_name }}"
+            display_name: "smoke user (updated)"
+            state: present
+          register: user_drift
+
+        - name: Assert drift triggered an update
+          assert:
+            that:
+              - user_drift.changed
+              - user_drift.user.DisplayName == "smoke user (updated)"
+            fail_msg: "Drift update failed: {{ user_drift }}"
+
+        # --- User info ---
+        - name: Describe user with attached policies (none yet)
+          fardani235.byteplus.byteplus_iam_user_info:
+            user_name: "{{ user_name }}"
+            include_attached_policies: true
+          register: user_info
+
+        - name: Assert user_info returns the user
+          assert:
+            that:
+              - user_info.count == 1
+              - user_info.users[0].UserName == user_name
+              - user_info.users[0].attached_policies | length == 0
+            fail_msg: "user_info did not return the expected user"
+
+        # --- Policy create + drift on document ---
+        - name: Create custom policy
+          fardani235.byteplus.byteplus_iam_policy:
+            policy_name: "{{ policy_name }}"
+            description: "smoke policy"
+            policy_document:
+              Statement:
+                - Effect: Allow
+                  Action: ["tos:GetObject"]
+                  Resource: "*"
+            state: present
+          register: pol_create
+
+        - name: Assert policy created
+          assert:
+            that:
+              - pol_create.changed
+              - pol_create.policy.PolicyName == policy_name
+
+        - name: Idempotency — same document with reordered keys
+          fardani235.byteplus.byteplus_iam_policy:
+            policy_name: "{{ policy_name }}"
+            description: "smoke policy"
+            policy_document:
+              Statement:
+                # Same semantic content, different key order — must not
+                # register as drift thanks to canonicalize_policy_document.
+                - Resource: "*"
+                  Action: ["tos:GetObject"]
+                  Effect: Allow
+            state: present
+          register: pol_idem
+
+        - name: Assert reordered-keys path is a no-op
+          assert:
+            that:
+              - not pol_idem.changed
+            fail_msg: "Policy document canonicalization failed"
+
+        - name: Drift detection — change document content
+          fardani235.byteplus.byteplus_iam_policy:
+            policy_name: "{{ policy_name }}"
+            description: "smoke policy"
+            policy_document:
+              Statement:
+                - Effect: Allow
+                  Action: ["tos:GetObject", "tos:ListBucket"]
+                  Resource: "*"
+            state: present
+          register: pol_drift
+
+        - name: Assert document drift triggered update
+          assert:
+            that:
+              - pol_drift.changed
+            fail_msg: "Policy document drift not detected"
+
+        # --- Policy_info listing ---
+        - name: List custom policies (must include ours)
+          fardani235.byteplus.byteplus_iam_policy_info:
+            scope: Custom
+          register: pol_list
+
+        - name: Assert our policy is in the listing
+          assert:
+            that:
+              - policy_name in (pol_list.policies | map(attribute='PolicyName') | list)
+
+        # --- Policy attachment to user ---
+        - name: Attach policy to user
+          fardani235.byteplus.byteplus_iam_policy_attachment:
+            policy_name: "{{ policy_name }}"
+            target_type: user
+            target_name: "{{ user_name }}"
+            state: present
+          register: attach_user
+
+        - name: Assert attachment created
+          assert:
+            that:
+              - attach_user.changed
+
+        - name: Idempotency — same attachment
+          fardani235.byteplus.byteplus_iam_policy_attachment:
+            policy_name: "{{ policy_name }}"
+            target_type: user
+            target_name: "{{ user_name }}"
+            state: present
+          register: attach_idem
+
+        - name: Assert attachment idempotency
+          assert:
+            that:
+              - not attach_idem.changed
+            fail_msg: "Policy attachment idempotency check failed"
+
+        # --- Role create + attach the same policy ---
+        - name: Create role
+          fardani235.byteplus.byteplus_iam_role:
+            role_name: "{{ role_name }}"
+            description: "smoke role"
+            max_session_duration: 7200
+            trust_policy_document:
+              Statement:
+                - Effect: Allow
+                  Principal:
+                    Service: ["ecs"]
+                  Action: sts:AssumeRole
+            state: present
+          register: role_create
+
+        - name: Assert role created
+          assert:
+            that:
+              - role_create.changed
+              - role_create.role.RoleName == role_name
+
+        - name: Attach policy to role
+          fardani235.byteplus.byteplus_iam_policy_attachment:
+            policy_name: "{{ policy_name }}"
+            target_type: role
+            target_name: "{{ role_name }}"
+            state: present
+          register: attach_role
+
+        - name: Assert role attachment created
+          assert:
+            that:
+              - attach_role.changed
+
+        # --- Login profile (the can't-read-password path) ---
+        - name: Create login profile
+          fardani235.byteplus.byteplus_iam_login_profile:
+            user_name: "{{ user_name }}"
+            password: "{{ login_password }}"
+            password_reset_required: true
+            login_allowed: true
+            state: present
+          register: lp_create
+          no_log: true
+
+        - name: Assert login profile created
+          assert:
+            that:
+              - lp_create.changed
+
+        - name: Re-run with a different password without force_password_update
+          fardani235.byteplus.byteplus_iam_login_profile:
+            user_name: "{{ user_name }}"
+            password: "this-would-rotate-if-the-guard-failed"
+            password_reset_required: true
+            login_allowed: true
+            state: present
+          register: lp_no_rotate
+          no_log: true
+
+        - name: Assert guard prevented silent password rotation
+          assert:
+            that:
+              - not lp_no_rotate.changed
+            fail_msg: >-
+              Login-profile guard failed — re-running with a different
+              password without force_password_update should be a no-op.
+
+        # --- Access keys: create, rotate, delete ---
+        - name: Ensure user has an active access key
+          fardani235.byteplus.byteplus_iam_access_key:
+            user_name: "{{ user_name }}"
+            state: present
+          register: ak_create
+          no_log: true
+
+        - name: Assert access key was created with a secret
+          # access_key.SecretAccessKey is only present on the create
+          # response. The module wraps it in no_log_values, so we can
+          # only assert presence — printing the value would be unsafe.
+          assert:
+            that:
+              - ak_create.changed
+              - ak_create.access_key is defined
+              - (ak_create.access_key.SecretAccessKey
+                 | default(ak_create.access_key.secret_access_key, true))
+                | length > 0
+            fail_msg: "Access key creation did not return a secret"
+
+        - name: Idempotency — already has active key
+          fardani235.byteplus.byteplus_iam_access_key:
+            user_name: "{{ user_name }}"
+            state: present
+          register: ak_idem
+          no_log: true
+
+        - name: Assert no change when active key already exists
+          assert:
+            that:
+              - not ak_idem.changed
+
+        - name: Rotate access keys
+          fardani235.byteplus.byteplus_iam_access_key:
+            user_name: "{{ user_name }}"
+            rotate: true
+          register: ak_rotate
+          no_log: true
+
+        - name: Assert rotation produced a fresh key
+          assert:
+            that:
+              - ak_rotate.changed
+              - ak_rotate.access_key is defined
+
+        - name: Rotate again — must fail because user now has 2 keys
+          fardani235.byteplus.byteplus_iam_access_key:
+            user_name: "{{ user_name }}"
+            rotate: true
+          register: ak_rotate_fail
+          ignore_errors: true
+          no_log: true
+
+        - name: Assert rotate hard-cap guard fired
+          assert:
+            that:
+              - ak_rotate_fail.failed
+              - "'maximum is 2' in (ak_rotate_fail.msg | default(''))"
+            fail_msg: >-
+              Rotation against a user with 2 keys should fail with the
+              "maximum is 2" guard.
+
+        - name: Report result
+          debug:
+            msg: "IAM smoke test PASSED"
+
+      always:
+        # Best-effort tear-down. The order matters: BytePlus refuses to
+        # delete a user that still has AKs or attachments, and refuses
+        # to delete a policy that's still attached, so we walk the
+        # dependency graph from the leaves inward.
+        - name: Always — detach policy from role
+          fardani235.byteplus.byteplus_iam_policy_attachment:
+            policy_name: "{{ policy_name }}"
+            target_type: role
+            target_name: "{{ role_name }}"
+            state: absent
+          failed_when: false
+
+        - name: Always — detach policy from user
+          fardani235.byteplus.byteplus_iam_policy_attachment:
+            policy_name: "{{ policy_name }}"
+            target_type: user
+            target_name: "{{ user_name }}"
+            state: absent
+          failed_when: false
+
+        - name: Always — list any remaining access keys
+          fardani235.byteplus.byteplus_iam_user_info:
+            user_name: "{{ user_name }}"
+            include_access_keys: true
+          register: ak_listing
+          failed_when: false
+          no_log: true
+
+        - name: Always — delete each remaining access key
+          fardani235.byteplus.byteplus_iam_access_key:
+            user_name: "{{ user_name }}"
+            access_key_id: "{{ item.AccessKeyId
+                               | default(item.access_key_id) }}"
+            state: absent
+          loop: "{{ ak_listing.users[0].access_keys | default([]) }}"
+          failed_when: false
+          no_log: true
+
+        - name: Always — delete login profile
+          fardani235.byteplus.byteplus_iam_login_profile:
+            user_name: "{{ user_name }}"
+            state: absent
+          failed_when: false
+
+        - name: Always — delete role
+          fardani235.byteplus.byteplus_iam_role:
+            role_name: "{{ role_name }}"
+            state: absent
+          failed_when: false
+
+        - name: Always — delete policy
+          fardani235.byteplus.byteplus_iam_policy:
+            policy_name: "{{ policy_name }}"
+            state: absent
+          failed_when: false
+
+        - name: Always — delete user
+          fardani235.byteplus.byteplus_iam_user:
+            user_name: "{{ user_name }}"
+            state: absent
+          failed_when: false
