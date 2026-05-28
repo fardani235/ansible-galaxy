@@ -1,0 +1,62 @@
+minor_changes:
+  - >
+    Add C(byteplus_iam_user) and C(byteplus_iam_user_info) modules —
+    CRUD an IAM user by C(user_name) and list/describe users with
+    optional access-key and attached-policy expansion. Delete refuses
+    to auto-cascade and surfaces the server's still-has-keys /
+    still-has-attachments error verbatim, matching the C(byteplus_vpc)
+    posture.
+  - >
+    Add C(byteplus_iam_login_profile) module — manage the BytePlus
+    console login profile for a user. The "can't read it back" pattern
+    is the interesting one: BytePlus does not return passwords from
+    C(GetLoginProfile), so the module cannot detect password drift. By
+    default, re-running with a different O(password) is a no-op;
+    explicit O(force_password_update=true) is required to push a new
+    password, guarding against silent rotation across playbook re-runs.
+  - >
+    Add C(byteplus_iam_access_key) module — create / deactivate /
+    delete / rotate AKs. C(secret_access_key) is returned exactly once
+    at create time and is registered with C(module.no_log_values).
+    C(rotate=true) creates a new key then deactivates the oldest
+    existing active key; fails before C(CreateAccessKey) when the user
+    already has 2 keys (BytePlus's hard cap), since silently
+    overwriting one of two operational keys is the kind of surprise
+    we want to refuse, not accommodate.
+  - >
+    Add C(byteplus_iam_policy) and C(byteplus_iam_policy_info)
+    modules — CRUD customer-managed policies and list/describe across
+    customer-managed and system policies. C(byteplus_iam_policy)
+    refuses to touch system policies. Policy documents are compared
+    after parse-then-key-sort, so re-running with semantically
+    identical JSON of different key order does not register as drift.
+  - >
+    Add C(byteplus_iam_policy_attachment) module — one Ansible module
+    dispatching to all four BytePlus IAM attachment verbs
+    (C(AttachUserPolicy), C(DetachUserPolicy), C(AttachRolePolicy),
+    C(DetachRolePolicy)) via the O(target_type) parameter. Idempotency
+    pre-checks current attachments via the matching C(List*) verb so
+    C(changed) is honest. Matches policies by (name, type) tuple
+    because the same C(policy_name) can exist under both C(Custom) and
+    C(System) scopes.
+  - >
+    Add C(byteplus_iam_role) and C(byteplus_iam_role_info) modules —
+    CRUD an IAM role with trust-policy canonicalization (same as
+    C(byteplus_iam_policy)) and client-side validation of
+    C(max_session_duration) against BytePlus's documented
+    [3600, 43200] range.
+  - >
+    Add C(iam_common) module_utils with C(IAMClient) wrapping
+    C(byteplussdkcore.UniversalApi) for the BytePlus IAM HTTP API
+    (C(service='iam'), C(version='2018-01-01')). Includes
+    C(canonicalize_policy_document) for drift detection, paginated
+    C(list_*) helpers, and a C(_make_request) classifier that routes
+    BytePlus error envelopes into C(IAMNotFound) / C(IAMAlreadyExists)
+    / C(IAMClientError) with the C(request_id) embedded in every
+    raised message.
+  - >
+    Add C(playbooks/smoke_iam.yml) — full lifecycle smoke against a
+    live BytePlus account, exercising user, policy, attachment, role,
+    login-profile, and access-key flows including the
+    C(force_password_update) and access-key 2-cap guards. Excluded
+    from the published tarball.

@@ -476,6 +476,146 @@ absent from your `entries:` list (i.e. reconcile to exactly your set).
 The `byteplus_prefix_list_info` module lists prefix lists with optional
 `include_entries: true` to also fetch each list's contents in one call.
 
+### byteplus_iam_user / byteplus_iam_user_info / byteplus_iam_login_profile / byteplus_iam_access_key
+
+Manage BytePlus IAM identities and their console / programmatic access.
+
+| Module                          | Purpose                                                                |
+|---------------------------------|------------------------------------------------------------------------|
+| `byteplus_iam_user`             | CRUD an IAM user by `user_name`                                        |
+| `byteplus_iam_user_info`        | List or describe users; optional `include_access_keys` / `include_attached_policies` |
+| `byteplus_iam_login_profile`    | Console login password for a user; rotates only on explicit `force_password_update` |
+| `byteplus_iam_access_key`       | Create / deactivate / delete / rotate AKs; secret returned exactly once |
+
+**Playbook examples:**
+
+```yaml
+- name: Create an IAM user
+  fardani235.byteplus.byteplus_iam_user:
+    user_name: alice
+    display_name: Alice Example
+    email: alice@example.com
+    state: present
+
+- name: Give them console access (must rotate on first login)
+  fardani235.byteplus.byteplus_iam_login_profile:
+    user_name: alice
+    password: "{{ lookup('password', '/dev/null length=32') }}"
+    password_reset_required: true
+    state: present
+
+- name: Ensure alice has an active access key, capture the secret
+  fardani235.byteplus.byteplus_iam_access_key:
+    user_name: alice
+    state: present
+  register: ak
+  no_log: true   # the response carries the secret
+
+- name: Rotate alice's access keys
+  fardani235.byteplus.byteplus_iam_access_key:
+    user_name: alice
+    rotate: true
+  no_log: true
+```
+
+**Notes:**
+
+- Re-running `byteplus_iam_login_profile` with a different `password` is a
+  **no-op** unless `force_password_update: true` is set. Passwords can't
+  be read back, so the module never rotates them implicitly — explicit
+  opt-in is required to avoid silent credential churn.
+- `byteplus_iam_access_key` returns `secret_access_key` only at create
+  time, and the value is registered with `module.no_log_values`. The
+  always-returned `keys` field is stripped of any secret-shaped fields.
+- `rotate: true` fails before calling `CreateAccessKey` when the user
+  already has 2 keys (BytePlus's hard cap). Delete one explicitly first.
+
+### byteplus_iam_policy / byteplus_iam_policy_info / byteplus_iam_policy_attachment
+
+Manage customer-managed IAM policies and their attachments to users / roles.
+
+| Module                            | Purpose                                                |
+|-----------------------------------|--------------------------------------------------------|
+| `byteplus_iam_policy`             | CRUD a customer-managed policy by `policy_name`        |
+| `byteplus_iam_policy_info`        | List or describe policies; optional `include_entities` |
+| `byteplus_iam_policy_attachment`  | Attach / detach a policy to a user or role             |
+
+**Playbook examples:**
+
+```yaml
+- name: Create a custom read-only policy
+  fardani235.byteplus.byteplus_iam_policy:
+    policy_name: tos-read-only
+    description: "Read TOS buckets and objects only"
+    policy_document:
+      Statement:
+        - Effect: Allow
+          Action:
+            - tos:GetObject
+            - tos:ListBucket
+          Resource: "*"
+    state: present
+
+- name: Attach a custom policy to a user
+  fardani235.byteplus.byteplus_iam_policy_attachment:
+    policy_name: tos-read-only
+    target_type: user
+    target_name: alice
+    state: present
+
+- name: Attach a BytePlus system policy to a role
+  fardani235.byteplus.byteplus_iam_policy_attachment:
+    policy_name: AdministratorAccess
+    policy_type: System
+    target_type: role
+    target_name: deploy-role
+    state: present
+```
+
+**Notes:**
+
+- `byteplus_iam_policy` refuses to touch system policies. Use
+  `byteplus_iam_policy_info` to inspect them and
+  `byteplus_iam_policy_attachment` to attach them.
+- `policy_document` is canonicalized (parse-then-key-sort) for drift
+  detection, so re-running with semantically identical JSON does not
+  flip `changed=true` even if the key order differs.
+- `policy_type` is part of the attachment identity — the same
+  `policy_name` can exist as both `Custom` and `System`. Match on name
+  alone would silently no-op when the wrong flavor was attached.
+
+### byteplus_iam_role / byteplus_iam_role_info
+
+Manage IAM roles. Same drift-detection shape as `byteplus_iam_policy`
+applied to `trust_policy_document`.
+
+| Parameter                | Required | Default | Notes                                            |
+|--------------------------|----------|---------|--------------------------------------------------|
+| `role_name`              | yes      |         | Primary key; never renamed by this module        |
+| `trust_policy_document`  | when state=present | | Dict or JSON string; canonicalized for diff |
+| `description`            | no       |         |                                                  |
+| `max_session_duration`   | no       |         | Seconds; 3600 ≤ value ≤ 43200                    |
+| `state`                  | no       | present | `present` / `absent`                             |
+
+```yaml
+- name: Create a role assumable by ECS instances
+  fardani235.byteplus.byteplus_iam_role:
+    role_name: ecs-runtime-role
+    description: Used by ECS instances at runtime
+    max_session_duration: 7200
+    trust_policy_document:
+      Statement:
+        - Effect: Allow
+          Principal:
+            Service: [ecs]
+          Action: sts:AssumeRole
+    state: present
+```
+
+`byteplus_iam_role_info` lists or describes roles; pass
+`include_attached_policies: true` to expand each role's current
+attachments in one call.
+
 ## Idempotency
 
 - **DNS records**: Matches on host + record_type + value. Updates on diff, noop on match. Refuses to delete more than one match unless `value` narrows it or `delete_all: true` is set.
@@ -483,6 +623,9 @@ The `byteplus_prefix_list_info` module lists prefix lists with optional
 - **Objects**: Upload skips if MD5 hash matches remote ETag (multipart-uploaded objects are always re-uploaded because their ETag is not a single MD5).
 - **ECS instances**: `state=present` no-ops when an instance with the same `instance_id` or `instance_name` already exists. Lifecycle states (`started`/`stopped`/`restarted`) no-op when already in the target state. `project_name` narrows name-based lookup when the same name exists in multiple BytePlus projects.
 - **VPCs / subnets / security groups**: `state=present` no-ops when the resource exists and mutable fields (name, description, DNS servers) match. Drift on mutable fields is pushed via ModifyXAttributes; CIDR/zone/IPv6 are immutable post-create and ignored.
+- **IAM users / policies / roles**: `state=present` no-ops when the resource exists and mutable fields match. Policy and trust-policy documents are compared after parse-then-key-sort, so re-running with semantically identical JSON of different key order does not flip `changed`. Delete refuses to auto-cascade — a user with access keys or attachments, a policy with attachments, or a role with attachments must be torn down explicitly.
+- **IAM login profiles**: Passwords cannot be read back, so password drift is invisible to the module. Re-running with a different `password` is a no-op unless `force_password_update: true` is set explicitly.
+- **IAM access keys**: `state=present` (no `access_key_id`, no `rotate`) ensures the user has at least one Active key. `rotate: true` creates a new one and deactivates the oldest active key, failing fast if the user already has 2 keys.
 
 ## Check Mode
 
