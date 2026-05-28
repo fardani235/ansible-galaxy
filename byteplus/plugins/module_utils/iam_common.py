@@ -73,16 +73,22 @@ class IAMClientError(IAMError):
 
 
 # Error-code fragments used to dispatch to the right exception class.
-# The BytePlus IAM API mixes two shapes for the same conceptual error:
+# The BytePlus IAM API mixes several shapes for the same conceptual error:
 #   * `UserNotExist`, `RoleNotExist`, `PolicyNotExist`,
 #     `AccessKeyNotExist`, `LoginProfileNotExist` (observed live)
+#   * `RecordNotFound` (observed live from DeleteLoginProfile on a
+#     non-existent profile)
 #   * `EntityDoesNotExist.User`, `EntityAlreadyExists.Policy` (AWS-style;
 #     documented in some BytePlus references and may surface from
 #     paths we haven't exercised yet)
-# We match both with a substring check so the classifier doesn't need a
-# hard-coded enum that goes stale every time BytePlus adds a resource.
+# We match all of them with substring checks so the classifier doesn't
+# need a hard-coded enum that goes stale every time BytePlus adds a
+# resource or coins a new spelling.
 def _is_not_found(code):
-    return ('NotExist' in code) or code.startswith('EntityDoesNotExist')
+    return (
+        'NotExist' in code
+        or 'NotFound' in code
+        or code.startswith('EntityDoesNotExist'))
 
 
 def _is_already_exists(code):
