@@ -139,7 +139,7 @@ def _unwrap_entity(resp, key):
     return resp
 
 
-def canonicalize_policy_document(doc):
+def canonicalize_policy_document(doc, param_name='document'):
     """Return a canonical string form of a policy / trust-policy document.
 
     BytePlus reformats documents on the round trip (key order, whitespace),
@@ -149,19 +149,27 @@ def canonicalize_policy_document(doc):
 
     Accepts either a dict (Ansible YAML-decoded) or a string (raw JSON
     pasted by the caller). Returns a string.
+
+    `param_name` is the operator-facing Ansible parameter name (e.g.
+    "policy_document" for byteplus_iam_policy, "trust_policy_document"
+    for byteplus_iam_role). It's woven into the error messages so the
+    operator sees the same field name they typed in their playbook —
+    not a generic "document" or, worse, the wrong sibling's name.
+    The default is the neutral "document" so an unkeyworded call from
+    a future caller doesn't mislead.
     """
     if isinstance(doc, str):
         try:
             parsed = json.loads(doc)
         except ValueError as e:
             raise ValueError(
-                "policy_document is not valid JSON: {}".format(e))
+                "{} is not valid JSON: {}".format(param_name, e))
     elif isinstance(doc, dict):
         parsed = doc
     else:
         raise TypeError(
-            "policy_document must be a dict or JSON string, "
-            "got {}".format(type(doc).__name__))
+            "{} must be a dict or JSON string, got {}".format(
+                param_name, type(doc).__name__))
     return json.dumps(parsed, sort_keys=True, separators=(',', ':'))
 
 

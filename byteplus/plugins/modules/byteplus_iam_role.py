@@ -153,7 +153,9 @@ def _ensure_present(module, client):
 
     try:
         wire_doc = _wire_document(p['trust_policy_document'])
-        new_canon = canonicalize_policy_document(p['trust_policy_document'])
+        new_canon = canonicalize_policy_document(
+            p['trust_policy_document'],
+            param_name='trust_policy_document')
     except (ValueError, TypeError) as e:
         module.fail_json(msg=str(e))
 
