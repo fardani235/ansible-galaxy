@@ -100,6 +100,27 @@ def _is_already_exists(code):
 # ---------------------------------------------------------------------------
 
 
+# CreateDate prefixes BytePlus IAM uses to mean "this is a stub
+# placeholder, not a real entity". GetLoginProfile is the verb that
+# motivates this — see _is_login_profile_stub below — but if we ever
+# discover another verb with the same behavior we can fold it in here.
+_EPOCH_DATE_PREFIXES = ('19700101', '00010101')
+
+
+def _is_login_profile_stub(profile):
+    """Heuristic for the GetLoginProfile-returns-a-fake-profile case.
+
+    BytePlus IAM's GetLoginProfile does not surface a NotExist error
+    when the user has no console profile. It returns a synthesized
+    dict with epoch-y timestamps. Detect that pattern so callers can
+    treat it as "missing"."""
+    if not isinstance(profile, dict):
+        return False
+    create_date = profile.get('CreateDate') or ''
+    return any(
+        create_date.startswith(prefix) for prefix in _EPOCH_DATE_PREFIXES)
+
+
 def _unwrap_entity(resp, key):
     """Pull `key` out of `resp` if present, else return `resp`.
 
@@ -367,12 +388,28 @@ class IAMClient(object):
     # ----- login profiles -----
 
     def get_login_profile(self, user_name):
+        """Return the login profile dict, or None if it doesn't exist.
+
+        NB: Unlike get_user / get_policy / get_role — all of which
+        return a NotExist-family error when the entity is missing —
+        BytePlus IAM's GetLoginProfile returns a SUCCESS response with
+        a stub profile dict whose CreateDate is the Unix epoch
+        ('19700101T000000Z') or '00010101T000000Z'. Treating that stub
+        as "exists" sent byteplus_iam_login_profile down the
+        UpdateLoginProfile path, which the server then rejected with
+        LoginProfileNotExist (verified live via smoke_iam.yml).
+
+        We treat any epoch-marker CreateDate as a stub → None.
+        """
         try:
             resp = self._make_request(
                 'GetLoginProfile', {'UserName': user_name}, method='GET')
         except IAMNotFound:
             return None
-        return _unwrap_entity(resp, 'LoginProfile')
+        profile = _unwrap_entity(resp, 'LoginProfile')
+        if _is_login_profile_stub(profile):
+            return None
+        return profile
 
     def create_login_profile(self, user_name, password,
                              password_reset_required=True,
