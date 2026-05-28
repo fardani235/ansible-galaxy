@@ -25,18 +25,20 @@
 - name: Smoke test BytePlus IAM modules
   hosts: localhost
   gather_facts: false
-  vars:
-    # Pin a single suffix so create / lookup / delete all see the same
-    # name. {{ 999999 | random }} re-rolls on every reference.
-    suffix_seed: "{{ 999999 | random }}"
-    user_name: "smoke-iam-user-{{ suffix_seed }}"
-    policy_name: "smoke-iam-pol-{{ suffix_seed }}"
-    role_name: "smoke-iam-role-{{ suffix_seed }}"
-    # 32-byte alphanumeric, generated once per run. Used only to create
-    # the login profile so we can exercise update / delete paths.
-    login_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
 
   tasks:
+    # set_fact pins names once — `{{ 999999 | random }}` and the
+    # `lookup('password', ...)` plugin both re-evaluate on every Jinja
+    # render when defined under play-level `vars:`, so the create /
+    # idempotency / cleanup tasks would otherwise each see a different
+    # name. Same gotcha smoke_snapshot.yml documents.
+    - name: Pin unique names and password for this run
+      set_fact:
+        user_name: "smoke-iam-user-{{ 999999 | random }}"
+        policy_name: "smoke-iam-pol-{{ 999999 | random }}"
+        role_name: "smoke-iam-role-{{ 999999 | random }}"
+        login_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+
     - name: Announce run parameters
       debug:
         msg: >-
