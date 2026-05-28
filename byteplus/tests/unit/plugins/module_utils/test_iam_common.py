@@ -130,6 +130,48 @@ class TestCanonicalizePolicyDocument:
         with pytest.raises(TypeError, match='dict or JSON string'):
             iam.canonicalize_policy_document(['not', 'a', 'dict'])
 
+    def test_default_param_name_is_neutral_not_policy_document(self):
+        # This helper is reused by both byteplus_iam_policy AND
+        # byteplus_iam_role (for trust_policy_document). Hard-coding
+        # "policy_document" in the error surfaces the wrong field name
+        # to operators of the role module. The default must be a
+        # neutral noun like "document" so neither caller is misleading.
+        try:
+            iam.canonicalize_policy_document('not-json{{{')
+        except ValueError as e:
+            assert 'policy_document' not in str(e), (
+                "default error message must not name 'policy_document' — "
+                "byteplus_iam_role calls this helper with "
+                "trust_policy_document and would report the wrong field")
+        else:
+            raise AssertionError('expected ValueError')
+
+        try:
+            iam.canonicalize_policy_document(['not', 'a', 'dict'])
+        except TypeError as e:
+            assert 'policy_document' not in str(e)
+        else:
+            raise AssertionError('expected TypeError')
+
+    def test_param_name_kwarg_appears_in_invalid_json_error(self):
+        # Callers identify the Ansible parameter they're validating, so
+        # the operator sees their own field name in the error.
+        with pytest.raises(ValueError, match='trust_policy_document'):
+            iam.canonicalize_policy_document(
+                'not-json{{{', param_name='trust_policy_document')
+
+    def test_param_name_kwarg_appears_in_type_error(self):
+        with pytest.raises(TypeError, match='trust_policy_document'):
+            iam.canonicalize_policy_document(
+                ['not', 'a', 'dict'], param_name='trust_policy_document')
+
+    def test_param_name_kwarg_for_policy_document_caller(self):
+        # byteplus_iam_policy passes policy_document explicitly — the
+        # error must still mention it by name.
+        with pytest.raises(ValueError, match='policy_document'):
+            iam.canonicalize_policy_document(
+                'not-json{{{', param_name='policy_document')
+
     def test_returns_string(self):
         # We compare canonical forms with ==, so a string return is the
         # cleanest contract. (A dict would also work but a string is
