@@ -36,7 +36,11 @@ def _stub_imports():
         sys.modules.setdefault(name, types.ModuleType(name))
 
     # Provide a fake iam_common just deep enough for the module's import
-    # — the dispatch tests don't go through IAMClient itself.
+    # — the dispatch tests don't go through IAMClient itself. Explicit
+    # assignment (not setdefault) is important: another IAM unit test
+    # in the same pytest session may have populated this slot with a
+    # different stub that doesn't expose all the symbols this test
+    # touches.
     iam_common = types.ModuleType(
         'ansible_collections.fardani235.byteplus.plugins.'
         'module_utils.iam_common')
@@ -48,8 +52,12 @@ def _stub_imports():
     class _IAMError(Exception):
         pass
 
+    class _IAMNotFound(_IAMError):
+        pass
+
     iam_common.IAMClient = _IAMClient
     iam_common.IAMError = _IAMError
+    iam_common.IAMNotFound = _IAMNotFound
     sys.modules[
         'ansible_collections.fardani235.byteplus.plugins.module_utils.'
         'iam_common'
@@ -121,6 +129,32 @@ class TestIsAttached:
         client.list_attached_user_policies.return_value = None
         assert pa.is_attached(
             client, 'p1', 'Custom', 'user', 'alice') is False
+
+    def test_target_user_not_found_returns_false(self):
+        # Cleanup `always:` blocks in smoke_iam.yml call detach against
+        # targets that may have already been torn down (or, in the case
+        # of a failure during create, never existed in the first place).
+        # is_attached must return False there — "X is not attached to a
+        # nonexistent target" is the right semantic answer, and lets
+        # the cleanup task no-op cleanly instead of failing with an
+        # ApiException-wrapped Not Found.
+        # Use IAMNotFound as the MODULE UNDER TEST captured it at
+        # import time. Other tests in the same pytest session may have
+        # re-stomped sys.modules['...iam_common'] with a stub that
+        # doesn't expose IAMNotFound; what matters here is the symbol
+        # the production code actually checks against.
+        client = mock.Mock()
+        client.list_attached_user_policies.side_effect = pa.IAMNotFound(
+            "user not found")
+        assert pa.is_attached(
+            client, 'p1', 'Custom', 'user', 'gone') is False
+
+    def test_target_role_not_found_returns_false(self):
+        client = mock.Mock()
+        client.list_attached_role_policies.side_effect = pa.IAMNotFound(
+            "role not found")
+        assert pa.is_attached(
+            client, 'p1', 'Custom', 'role', 'gone') is False
 
 
 class TestAttachDispatch:

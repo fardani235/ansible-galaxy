@@ -218,9 +218,13 @@ def main():
             region=dict(type='str', default='ap-southeast-1'),
             user_name=dict(type='str', required=True),
             password=dict(type='str', required=False, no_log=True),
-            password_reset_required=dict(type='bool', default=True),
+            # no_log=False is explicit on these bool flags. Ansible's
+            # argspec scanner warns on any param name containing
+            # "password" if no_log isn't set either way — these are
+            # never sensitive on their own, only the `password` field is.
+            password_reset_required=dict(type='bool', default=True, no_log=False),
             login_allowed=dict(type='bool', default=True),
-            force_password_update=dict(type='bool', default=False),
+            force_password_update=dict(type='bool', default=False, no_log=False),
             state=dict(type='str', default='present',
                        choices=['present', 'absent']),
         ),

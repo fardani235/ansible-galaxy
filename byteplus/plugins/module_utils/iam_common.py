@@ -139,10 +139,11 @@ class IAMClient(object):
     def _make_request(self, action, params=None, method='POST'):
         """Dispatch one BytePlus IAM action and classify the response.
 
-        UniversalApi returns a dict on both success and failure — errors
-        come back inside ResponseMetadata.Error rather than as raised
-        exceptions, so we inspect the envelope and route to the right
-        exception class.
+        The BytePlus IAM endpoint surfaces structured errors via
+        ApiException (HTTP non-2xx + JSON body) — NOT via a 200-OK
+        inline envelope. We support both shapes for defense-in-depth:
+        some IAM verbs (and other services this client may someday be
+        retargeted at) can return inline error envelopes too.
 
         We never log `params` here — see the file-level docstring.
         """
@@ -158,36 +159,69 @@ class IAMClient(object):
         try:
             resp = self.api.do_call(info, params or {})
         except ApiException as e:
-            # Transport-level failure (timeout, DNS, etc.) — surface
-            # with the action name so the operator knows what was being
-            # attempted.
-            raise IAMClientError(
-                action=action, code='ApiException',
-                message=str(getattr(e, 'reason', e)),
-                request_id='(none)')
+            # The structured error is in e.body, NOT e.reason. e.reason
+            # is just the HTTP status text ("Not Found", "Bad Gateway"),
+            # which loses every distinction we need to classify into
+            # NotFound / AlreadyExists / other.
+            self._raise_classified(action, e)
 
         meta = (resp or {}).get('ResponseMetadata') or {}
         err = meta.get('Error') or {}
         if err:
-            code = err.get('Code') or 'Unknown'
-            message = err.get('Message') or ''
-            request_id = meta.get('RequestId') or '(none)'
-            if code.startswith(_NOT_FOUND_PREFIX):
-                raise IAMNotFound(
-                    "{} not found: {} (request_id={})".format(
-                        action, message, request_id))
-            if code.startswith(_ALREADY_EXISTS_PREFIX):
-                raise IAMAlreadyExists(
-                    "{} already exists: {} (request_id={})".format(
-                        action, message, request_id))
-            raise IAMClientError(
-                action=action, code=code,
-                message=message, request_id=request_id)
+            self._raise_from_envelope(action, err, meta)
 
         # Successful responses use `Result` for the payload; callers
         # that need the raw envelope can read `resp` themselves, but
         # the verbs below return the unwrapped Result for convenience.
         return resp.get('Result', resp) if resp else {}
+
+    def _raise_classified(self, action, api_exc):
+        """Classify an ApiException raised by UniversalApi into the right
+        IAMError subclass. Parses the JSON body for ResponseMetadata.Error;
+        falls back to a generic IAMClientError if the body is missing or
+        unparseable."""
+        body = getattr(api_exc, 'body', None)
+        parsed = None
+        if body:
+            try:
+                # Body is usually a string; some SDK paths pre-parse it.
+                parsed = (body if isinstance(body, dict)
+                          else json.loads(body))
+            except (ValueError, TypeError):
+                parsed = None
+
+        meta = (parsed or {}).get('ResponseMetadata') or {}
+        err = meta.get('Error') or {}
+        if err:
+            self._raise_from_envelope(action, err, meta)
+
+        # No structured envelope — fall back to whatever we can show.
+        reason = getattr(api_exc, 'reason', None) or str(api_exc)
+        status = getattr(api_exc, 'status', None)
+        message = ("{}: {}".format(status, reason)
+                   if status else reason)
+        raise IAMClientError(
+            action=action, code='ApiException',
+            message=message, request_id='(none)')
+
+    @staticmethod
+    def _raise_from_envelope(action, err, meta):
+        """Common dispatch: NotFound / AlreadyExists / other, from a
+        decoded ResponseMetadata.Error dict."""
+        code = err.get('Code') or 'Unknown'
+        message = err.get('Message') or ''
+        request_id = meta.get('RequestId') or '(none)'
+        if code.startswith(_NOT_FOUND_PREFIX):
+            raise IAMNotFound(
+                "{} not found [{}]: {} (request_id={})".format(
+                    action, code, message, request_id))
+        if code.startswith(_ALREADY_EXISTS_PREFIX):
+            raise IAMAlreadyExists(
+                "{} already exists [{}]: {} (request_id={})".format(
+                    action, code, message, request_id))
+        raise IAMClientError(
+            action=action, code=code,
+            message=message, request_id=request_id)
 
     # ----- pagination -----
 
