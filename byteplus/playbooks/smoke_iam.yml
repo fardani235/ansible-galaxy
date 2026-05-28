@@ -77,9 +77,13 @@
             fail_msg: "User idempotency check failed"
 
         - name: Drift detection — change display_name
+          # BytePlus IAM rejects DisplayName values containing parens,
+          # commas, brackets, or slashes with InvalidDisplayName. The
+          # exact server-side regex isn't documented; letters, digits,
+          # hyphens, underscores, periods, spaces, and @ are known-safe.
           fardani235.byteplus.byteplus_iam_user:
             user_name: "{{ user_name }}"
-            display_name: "smoke user (updated)"
+            display_name: "smoke user updated"
             state: present
           register: user_drift
 
@@ -87,7 +91,7 @@
           assert:
             that:
               - user_drift.changed
-              - user_drift.user.DisplayName == "smoke user (updated)"
+              - user_drift.user.DisplayName == "smoke user updated"
             fail_msg: "Drift update failed: {{ user_drift }}"
 
         # --- User info ---
