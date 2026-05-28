@@ -296,6 +296,38 @@ class TestApiExceptionClassification:
         with pytest.raises(iam.IAMClientError):
             client.create_user('whatever')
 
+    # The actual BytePlus IAM error codes — learned from running
+    # smoke_iam.yml against a live account. They are NOT the AWS-style
+    # 'EntityDoesNotExist.User' suffixed form I originally assumed;
+    # they are 'UserNotExist' / 'RoleNotExist' / 'PolicyNotExist' /
+    # 'AccessKeyNotExist' / 'LoginProfileNotExist'.
+    @pytest.mark.parametrize('code,resource', [
+        ('UserNotExist', 'user'),
+        ('RoleNotExist', 'role'),
+        ('PolicyNotExist', 'policy'),
+        ('AccessKeyNotExist', 'access key'),
+        ('LoginProfileNotExist', 'login profile'),
+    ])
+    def test_byteplus_notexist_codes_map_to_notfound(self, code, resource):
+        client = _make_client()
+        client.api.do_call = mock.Mock(side_effect=_api_exception(
+            code, '{} does not exist'.format(resource), status=404))
+        # get_user is what every idempotency-via-get path uses; the
+        # right answer is None, not a raised IAMClientError.
+        assert client.get_user('does-not-exist') is None
+
+    @pytest.mark.parametrize('code', [
+        'UserAlreadyExists',
+        'RoleAlreadyExists',
+        'PolicyAlreadyExists',
+    ])
+    def test_byteplus_alreadyexists_codes_map_to_alreadyexists(self, code):
+        client = _make_client()
+        client.api.do_call = mock.Mock(side_effect=_api_exception(
+            code, 'already there', status=409))
+        with pytest.raises(iam.IAMAlreadyExists):
+            client.create_user('dup')
+
 
 # ---------- paginator ----------
 

@@ -72,11 +72,21 @@ class IAMClientError(IAMError):
                 action, code, message, request_id))
 
 
-# Error-code prefixes used to dispatch to the right exception class. The
-# BytePlus IAM API uses suffixed codes like `EntityDoesNotExist.User`,
-# `EntityAlreadyExists.Policy`, so we match by prefix.
-_NOT_FOUND_PREFIX = 'EntityDoesNotExist'
-_ALREADY_EXISTS_PREFIX = 'EntityAlreadyExists'
+# Error-code fragments used to dispatch to the right exception class.
+# The BytePlus IAM API mixes two shapes for the same conceptual error:
+#   * `UserNotExist`, `RoleNotExist`, `PolicyNotExist`,
+#     `AccessKeyNotExist`, `LoginProfileNotExist` (observed live)
+#   * `EntityDoesNotExist.User`, `EntityAlreadyExists.Policy` (AWS-style;
+#     documented in some BytePlus references and may surface from
+#     paths we haven't exercised yet)
+# We match both with a substring check so the classifier doesn't need a
+# hard-coded enum that goes stale every time BytePlus adds a resource.
+def _is_not_found(code):
+    return ('NotExist' in code) or code.startswith('EntityDoesNotExist')
+
+
+def _is_already_exists(code):
+    return ('AlreadyExists' in code)
 
 
 # ---------------------------------------------------------------------------
@@ -211,11 +221,11 @@ class IAMClient(object):
         code = err.get('Code') or 'Unknown'
         message = err.get('Message') or ''
         request_id = meta.get('RequestId') or '(none)'
-        if code.startswith(_NOT_FOUND_PREFIX):
+        if _is_not_found(code):
             raise IAMNotFound(
                 "{} not found [{}]: {} (request_id={})".format(
                     action, code, message, request_id))
-        if code.startswith(_ALREADY_EXISTS_PREFIX):
+        if _is_already_exists(code):
             raise IAMAlreadyExists(
                 "{} already exists [{}]: {} (request_id={})".format(
                     action, code, message, request_id))
