@@ -160,6 +160,24 @@ def _normalize_status(value):
     return str(value).lower()
 
 
+def _needs_deactivate_before_delete(key):
+    """BytePlus IAM refuses to DeleteAccessKey on a key in 'active'
+    status — the server error is C(AccessKeyCanNotDelete): 'The access
+    key identity is active, can not be deleted.' (Verified live via
+    smoke_iam.yml.) Callers must deactivate the key first.
+
+    Returns True if the key needs deactivation. A missing Status field
+    is treated as active (the safer default — a spurious deactivate is
+    a no-op; a missing deactivate aborts the delete with an opaque
+    server error)."""
+    if not key:
+        return True
+    status = _normalize_status(key.get('Status'))
+    if status is None:
+        return True
+    return status == _STATUS_ACTIVE
+
+
 def find_oldest_active(keys):
     """Return the AccessKey.Id of the oldest key whose status is Active,
     or None if there is none. Used by rotate to pick which key to
@@ -309,6 +327,13 @@ def _ensure_absent(module, client, user_name, key_id):
         module.exit_json(
             changed=True,
             msg="Would delete access key {}".format(key_id))
+    # BytePlus refuses to delete an Active key with AccessKeyCanNotDelete.
+    # Deactivate first; if the deactivate fails we'd rather surface that
+    # specific error than the bewildering CanNotDelete one.
+    if _needs_deactivate_before_delete(found):
+        client.update_access_key(
+            access_key_id=key_id, status=_STATUS_INACTIVE,
+            user_name=user_name)
     client.delete_access_key(
         access_key_id=key_id, user_name=user_name)
     keys = _strip_secrets(
