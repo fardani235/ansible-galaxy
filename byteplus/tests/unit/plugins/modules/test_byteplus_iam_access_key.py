@@ -154,3 +154,35 @@ class TestNormalizeStatus:
 
     def test_none(self):
         assert ak._normalize_status(None) is None
+
+
+class TestNeedsDeactivateBeforeDelete:
+    """BytePlus rejects DeleteAccessKey on Active keys with the
+    AccessKeyCanNotDelete error (verified live: smoke_iam.yml's
+    'Always — delete each remaining access key' task failed on the
+    rotated-but-still-active key). The module must deactivate first.
+
+    These tests pin the small pure helper that decides whether a key
+    needs deactivation before deletion. The actual deactivate-then-
+    delete plumbing lives in _ensure_absent and goes through the live
+    smoke test."""
+
+    def test_active_key_needs_deactivate(self):
+        assert ak._needs_deactivate_before_delete(
+            {'Status': 'active'}) is True
+
+    def test_inactive_key_does_not_need_deactivate(self):
+        assert ak._needs_deactivate_before_delete(
+            {'Status': 'inactive'}) is False
+
+    def test_pascalcase_active_handled(self):
+        # Same casing-tolerance contract as _normalize_status / the
+        # rotate-flag logic — older SDK reps return PascalCase.
+        assert ak._needs_deactivate_before_delete(
+            {'Status': 'Active'}) is True
+
+    def test_missing_status_assumed_active(self):
+        # Defensive: if Status is somehow absent, the safer assumption
+        # is "active" — a spurious deactivate is a no-op; a missing
+        # deactivate aborts the delete with an opaque error.
+        assert ak._needs_deactivate_before_delete({}) is True
