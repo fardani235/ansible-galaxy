@@ -1,2 +1,0 @@
-plugins/module_utils/tos_common.py import-3.6!skip
-plugins/module_utils/tos_common.py import-3.7!skip
