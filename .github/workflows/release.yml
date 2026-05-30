@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags: ['byteplus-v*']
+
+concurrency:
+  group: release-byteplus
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build and publish to Ansible Galaxy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out monorepo at tag
+        uses: actions/checkout@v4
+        with:
+          path: src
+
+      - name: Symlink collection into ansible_collections path
+        run: |
+          mkdir -p ansible_collections/fardani235
+          ln -s "$GITHUB_WORKSPACE/src/byteplus" ansible_collections/fardani235/byteplus
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ansible-core
+        run: pip install ansible-core
+
+      - name: Verify tag matches galaxy.yml version
+        working-directory: ansible_collections/fardani235/byteplus
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#byteplus-v}"
+          GALAXY_VERSION="$(grep '^version:' galaxy.yml | awk '{print $2}')"
+          if [ "$TAG_VERSION" != "$GALAXY_VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME (=$TAG_VERSION) != galaxy.yml version $GALAXY_VERSION"
+            exit 1
+          fi
+          echo "Tag and galaxy.yml both at $TAG_VERSION."
+
+      - name: Verify changelog fragments are folded
+        working-directory: ansible_collections/fardani235/byteplus
+        run: |
+          UNFOLDED=$(find changelogs/fragments -type f \
+            \( -name '*.yml' -o -name '*.yaml' \) \
+            ! -name '.placeholder' 2>/dev/null || true)
+          if [ -n "$UNFOLDED" ]; then
+            echo "::error::unfolded changelog fragments present; run 'antsibull-changelog release' before tagging"
+            echo "$UNFOLDED"
+            exit 1
+          fi
+          echo "No unfolded changelog fragments."
+
+      - name: Run sanity on tagged commit
+        working-directory: ansible_collections/fardani235/byteplus
+        run: ansible-test sanity --docker --python 3.11
+
+      - name: Install unit test requirements
+        working-directory: ansible_collections/fardani235/byteplus
+        run: pip install -r tests/unit/requirements.txt
+
+      - name: Run unit tests on tagged commit
+        working-directory: ansible_collections/fardani235/byteplus
+        run: pytest tests/unit/ -v
+
+      - name: Build collection tarball
+        working-directory: ansible_collections/fardani235/byteplus
+        run: ansible-galaxy collection build --output-path /tmp/dist
+
+      - name: Publish to Ansible Galaxy
+        working-directory: ansible_collections/fardani235/byteplus
+        env:
+          GALAXY_API_KEY: ${{ secrets.GALAXY_API_KEY }}
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#byteplus-v}"
+          ansible-galaxy collection publish \
+            "/tmp/dist/fardani235-byteplus-${TAG_VERSION}.tar.gz" \
+            --api-key "$GALAXY_API_KEY"

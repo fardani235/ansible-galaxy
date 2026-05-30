@@ -1,0 +1,71 @@
+name: Test
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'byteplus/**'
+      - '.github/workflows/test.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'byteplus/**'
+      - '.github/workflows/test.yml'
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sanity:
+    name: Sanity (ansible-core ${{ matrix.ansible-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ansible-version: ['2.16', '2.17', '2.18']
+    steps:
+      - name: Check out monorepo
+        uses: actions/checkout@v4
+        with:
+          path: src
+
+      - name: Symlink collection into ansible_collections path
+        run: |
+          mkdir -p ansible_collections/fardani235
+          ln -s "$GITHUB_WORKSPACE/src/byteplus" ansible_collections/fardani235/byteplus
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ansible-core ${{ matrix.ansible-version }}
+        run: pip install "ansible-core==${{ matrix.ansible-version }}.*"
+
+      - name: Run ansible-test sanity
+        working-directory: ansible_collections/fardani235/byteplus
+        run: ansible-test sanity --docker --python 3.11
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out monorepo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ansible-core
+        run: pip install ansible-core
+
+      - name: Install unit test requirements
+        working-directory: byteplus
+        run: pip install -r tests/unit/requirements.txt
+
+      - name: Run pytest
+        working-directory: byteplus
+        run: pytest tests/unit/ -v
