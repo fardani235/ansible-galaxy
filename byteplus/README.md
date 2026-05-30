@@ -643,3 +643,41 @@ All modules support `check_mode: true` to preview changes without executing them
 | `byteplus_dns_record`     | `zone_id`      | 1-9999999999                                                  |
 | `byteplus_tos_bucket`     | `bucket_name`  | 3-63 chars, lowercase/numbers/hyphens, no leading/trailing hyphen |
 | `byteplus_tos_object`     | `src`/`content`| Mutually exclusive; exactly one required when state=present  |
+
+## CI/CD
+
+This collection ships two GitHub Actions workflows at the **monorepo
+root** under `.github/workflows/` (one level above the `byteplus/`
+collection directory, because GHA only reads workflows from the repo
+root):
+
+- **`test.yml`** runs on pull requests to `main` and pushes to `main`,
+  paths-filtered to `byteplus/**` so it only fires on changes to this
+  collection. It runs `ansible-test sanity` across ansible-core 2.16,
+  2.17, and 2.18 in parallel plus a single `pytest tests/unit/` job.
+  Failure on any matrix cell does not cancel the others
+  (`fail-fast: false`).
+- **`release.yml`** runs on `byteplus-v*` tag pushes (the
+  `byteplus-` prefix namespaces the tag so future sibling collections
+  can use their own prefixes). It verifies the tag matches `galaxy.yml`
+  version, verifies no unfolded `changelogs/fragments/*.yml` remain,
+  re-runs sanity + unit on the tagged commit, builds the collection
+  with `ansible-galaxy collection build`, then publishes to Ansible
+  Galaxy. The Galaxy API token is supplied via the repo secret
+  `GALAXY_API_KEY` (Settings → Secrets and variables → Actions).
+
+**To cut a release:**
+
+1. Bump `version:` in `byteplus/galaxy.yml`.
+2. Run `antsibull-changelog release` from inside `byteplus/` to fold
+   pending fragments into the changelog. Commit.
+3. (Optional, recommended) Run the local dry-run from
+   `byteplus/docs/cicd-local-dryrun.md` to verify the release guards
+   pass.
+4. From the monorepo root, tag with the version prefixed by
+   `byteplus-v` (e.g. `byteplus-v1.2.0`) and push:
+   `git tag byteplus-v1.2.0 && git push origin byteplus-v1.2.0`.
+
+If `release.yml` fails partway through, fix the issue and re-tag with
+the next patch version — Galaxy rejects re-uploads of the same version
+number, so a failed publish never leaves a partial artifact on Galaxy.
