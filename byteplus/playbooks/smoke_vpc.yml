@@ -1,0 +1,252 @@
+---
+# Smoke test for the BytePlus VPC and route-table modules.
+#   fardani235.byteplus.byteplus_vpc
+#   fardani235.byteplus.byteplus_vpc_info
+#   fardani235.byteplus.byteplus_subnet
+#   fardani235.byteplus.byteplus_route_table
+#   fardani235.byteplus.byteplus_route_table_info
+#   fardani235.byteplus.byteplus_route_entry
+#
+# Runs against a real BytePlus account. Requires:
+#   BYTEPLUS_ACCESS_KEY, BYTEPLUS_SECRET_KEY    — credentials with VPC
+#                                                 admin permissions
+#   Optional:
+#     BYTEPLUS_REGION                           — defaults to ap-southeast-1
+#     SMOKE_ZONE_ID                             — availability zone for the
+#                                                 test subnet (defaults to
+#                                                 ap-southeast-1a)
+#
+# A VPC + subnet + route table costs nothing while idle, but they linger
+# forever if cleanup is skipped. The `always` block tears every resource
+# down even on assertion failure.
+#
+# Usage:
+#   ansible-playbook playbooks/smoke_vpc.yml
+
+- name: Smoke test BytePlus VPC modules
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    # Pin random names once — the same Jinja-re-evaluation gotcha that
+    # smoke_iam.yml documents bites here too.
+    - name: Pin unique names for this run
+      set_fact:
+        vpc_name: "smoke-vpc-{{ 999999 | random }}"
+        subnet_name: "smoke-subnet-{{ 999999 | random }}"
+        rt_name: "smoke-rt-{{ 999999 | random }}"
+        zone_id: "{{ lookup('env', 'SMOKE_ZONE_ID') | default('ap-southeast-1a', true) }}"
+
+    - block:
+        - name: Create VPC
+          fardani235.byteplus.byteplus_vpc:
+            vpc_name: "{{ vpc_name }}"
+            cidr_block: 172.31.0.0/16
+            description: smoke test VPC
+            tags:
+              - key: purpose
+                value: smoke
+          register: created_vpc
+
+        - name: Idempotency — create VPC again
+          fardani235.byteplus.byteplus_vpc:
+            vpc_name: "{{ vpc_name }}"
+            cidr_block: 172.31.0.0/16
+          register: created_vpc_again
+
+        - name: Assert second create was unchanged
+          assert:
+            that:
+              - created_vpc.changed
+              - not created_vpc_again.changed
+              - created_vpc.vpc.vpc_id == created_vpc_again.vpc.vpc_id
+
+        - name: Stash the VPC id for cleanup
+          set_fact:
+            smoke_vpc_id: "{{ created_vpc.vpc.vpc_id }}"
+
+        - name: Read it back via byteplus_vpc_info
+          fardani235.byteplus.byteplus_vpc_info:
+            vpc_name: "{{ vpc_name }}"
+          register: vpc_lookup
+
+        - name: Assert the info module found it
+          assert:
+            that:
+              - vpc_lookup.count == 1
+              - vpc_lookup.vpcs[0].vpc_id == smoke_vpc_id
+
+        - name: Create a subnet inside the VPC
+          fardani235.byteplus.byteplus_subnet:
+            subnet_name: "{{ subnet_name }}"
+            vpc_id: "{{ smoke_vpc_id }}"
+            cidr_block: 172.31.10.0/24
+            zone_id: "{{ zone_id }}"
+          register: created_subnet
+
+        - name: Stash subnet id
+          set_fact:
+            smoke_subnet_id: "{{ created_subnet.subnet.subnet_id }}"
+
+        - name: Create a custom route table
+          fardani235.byteplus.byteplus_route_table:
+            route_table_name: "{{ rt_name }}"
+            vpc_id: "{{ smoke_vpc_id }}"
+            description: smoke test route table
+            associated_subnet_ids:
+              - "{{ smoke_subnet_id }}"
+          register: created_rt
+
+        - name: Stash route table id
+          set_fact:
+            smoke_rt_id: "{{ created_rt.route_table.route_table_id }}"
+
+        - name: Idempotency — same route table again
+          fardani235.byteplus.byteplus_route_table:
+            route_table_id: "{{ smoke_rt_id }}"
+            associated_subnet_ids:
+              - "{{ smoke_subnet_id }}"
+          register: created_rt_again
+
+        - name: Assert second create was unchanged
+          assert:
+            that:
+              - created_rt.changed
+              - not created_rt_again.changed
+
+        - name: Read route table back with entries
+          fardani235.byteplus.byteplus_route_table_info:
+            route_table_ids:
+              - "{{ smoke_rt_id }}"
+            include_entries: true
+          register: rt_lookup
+
+        - name: Assert the info module found it and hydrated entries
+          assert:
+            that:
+              - rt_lookup.count == 1
+              - rt_lookup.route_tables[0].route_table_id == smoke_rt_id
+              - rt_lookup.route_tables[0].entries is defined
+
+        # BytePlus refuses delete on the system route table; refuse to
+        # modify it too — check that fail-closed behaviour against the
+        # default table the VPC was given automatically.
+        - name: List default (System) route tables for this VPC
+          fardani235.byteplus.byteplus_route_table_info:
+            vpc_id: "{{ smoke_vpc_id }}"
+          register: all_rts
+
+        - name: Find the System route table
+          set_fact:
+            system_rt_id: >-
+              {{ (all_rts.route_tables
+                  | selectattr('route_table_type', 'equalto', 'System')
+                  | list | first).route_table_id }}
+
+        - name: Attempting to rename the System table should fail
+          fardani235.byteplus.byteplus_route_table:
+            route_table_id: "{{ system_rt_id }}"
+            route_table_name: "not-allowed"
+          register: system_rename
+          failed_when: false
+
+        - name: Assert the refusal carries a clear message
+          assert:
+            that:
+              - system_rename.failed
+              - "'system route table' in system_rename.msg"
+
+        # Add a route entry that won't conflict with anything real: blackhole
+        # 192.0.2.0/24 (TEST-NET-1) via the freshly created subnet's
+        # default-gateway placeholder. Real environments would point at a
+        # NAT or ENI; smoke uses an Instance-type next-hop pointing at
+        # itself only enough to exercise the round-trip. We instead use a
+        # NetworkInterface route with an ENI we just created? — too much
+        # for smoke. Easiest: use `ip_address` next-hop which encodes the
+        # target in the CIDR and needs no parent resource.
+        - name: Add a route entry pointing nowhere (ip_address sink)
+          fardani235.byteplus.byteplus_route_entry:
+            route_table_id: "{{ smoke_rt_id }}"
+            destination_cidr_block: 192.0.2.0/24
+            next_hop_type: ip_address
+            description: smoke blackhole
+          register: created_entry
+
+        - name: Idempotency — re-add the same route
+          fardani235.byteplus.byteplus_route_entry:
+            route_table_id: "{{ smoke_rt_id }}"
+            destination_cidr_block: 192.0.2.0/24
+            next_hop_type: ip_address
+            description: smoke blackhole
+          register: created_entry_again
+
+        - name: Assert second add was unchanged
+          assert:
+            that:
+              - created_entry.changed
+              - not created_entry_again.changed
+
+        - name: Update the entry's description
+          fardani235.byteplus.byteplus_route_entry:
+            route_table_id: "{{ smoke_rt_id }}"
+            destination_cidr_block: 192.0.2.0/24
+            next_hop_type: ip_address
+            description: smoke blackhole v2
+          register: updated_entry
+
+        - name: Assert the update was applied
+          assert:
+            that:
+              - updated_entry.changed
+              - updated_entry.route_entry.description == 'smoke blackhole v2'
+
+        - name: Delete the route entry
+          fardani235.byteplus.byteplus_route_entry:
+            route_table_id: "{{ smoke_rt_id }}"
+            destination_cidr_block: 192.0.2.0/24
+            state: absent
+          register: deleted_entry
+
+        - name: Idempotent re-delete
+          fardani235.byteplus.byteplus_route_entry:
+            route_table_id: "{{ smoke_rt_id }}"
+            destination_cidr_block: 192.0.2.0/24
+            state: absent
+          register: deleted_entry_again
+
+        - name: Assert delete then no-op
+          assert:
+            that:
+              - deleted_entry.changed
+              - not deleted_entry_again.changed
+
+      always:
+        # Disassociate before deleting the route table — BytePlus refuses
+        # to delete a table with attached subnets.
+        - name: Drop route table associations
+          fardani235.byteplus.byteplus_route_table:
+            route_table_id: "{{ smoke_rt_id | default('') }}"
+            associated_subnet_ids: []
+          when: smoke_rt_id is defined
+          failed_when: false
+
+        - name: Delete route table
+          fardani235.byteplus.byteplus_route_table:
+            route_table_id: "{{ smoke_rt_id | default('') }}"
+            state: absent
+          when: smoke_rt_id is defined
+          failed_when: false
+
+        - name: Delete subnet
+          fardani235.byteplus.byteplus_subnet:
+            subnet_id: "{{ smoke_subnet_id | default('') }}"
+            state: absent
+          when: smoke_subnet_id is defined
+          failed_when: false
+
+        - name: Delete VPC
+          fardani235.byteplus.byteplus_vpc:
+            vpc_id: "{{ smoke_vpc_id | default('') }}"
+            state: absent
+          when: smoke_vpc_id is defined
+          failed_when: false

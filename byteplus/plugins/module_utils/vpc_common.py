@@ -105,6 +105,46 @@ from byteplussdkvpc.models.tag_for_create_prefix_list_input import (
     TagForCreatePrefixListInput,
 )
 
+from byteplussdkvpc.models.create_route_table_request import CreateRouteTableRequest
+from byteplussdkvpc.models.delete_route_table_request import DeleteRouteTableRequest
+from byteplussdkvpc.models.describe_route_table_list_request import (
+    DescribeRouteTableListRequest,
+)
+from byteplussdkvpc.models.modify_route_table_attributes_request import (
+    ModifyRouteTableAttributesRequest,
+)
+from byteplussdkvpc.models.associate_route_table_request import AssociateRouteTableRequest
+from byteplussdkvpc.models.disassociate_route_table_request import (
+    DisassociateRouteTableRequest,
+)
+from byteplussdkvpc.models.tag_for_create_route_table_input import (
+    TagForCreateRouteTableInput,
+)
+
+from byteplussdkvpc.models.create_route_entry_request import CreateRouteEntryRequest
+from byteplussdkvpc.models.delete_route_entry_request import DeleteRouteEntryRequest
+from byteplussdkvpc.models.describe_route_entry_list_request import (
+    DescribeRouteEntryListRequest,
+)
+from byteplussdkvpc.models.modify_route_entry_request import ModifyRouteEntryRequest
+
+
+# Route-entry next_hop_type translation. Users write snake_case in playbooks;
+# BytePlus accepts a specific PascalCase set on the wire. We translate at the
+# module boundary so the API spelling never leaks into playbooks.
+NEXT_HOP_TYPE_MAP = {
+    'instance': 'Instance',
+    'network_interface': 'NetworkInterface',
+    'nat_gateway': 'NatGW',
+    'vpn_gateway': 'VpnGW',
+    'transit_router': 'TransitRouter',
+    'ipv6_gateway': 'IPv6Gateway',
+    'ha_vip': 'HaVip',
+    'private_link_vpc_endpoint': 'PrivateLinkVpcEndpoint',
+    'ip_address': 'IpAddress',
+}
+NEXT_HOP_TYPE_REVERSE = {v: k for k, v in NEXT_HOP_TYPE_MAP.items()}
+
 
 _ALLOWED_ENTRY_FIELDS = frozenset({'cidr', 'description'})
 
@@ -660,6 +700,184 @@ class VPCClient(object):
                 self.api.modify_prefix_list(ModifyPrefixListRequest(**kwargs)))
         except ApiException as e:
             raise Exception("VPC ModifyPrefixList failed: {}".format(e.reason))
+
+
+    # ----- Route tables ------------------------------------------------------
+
+    def create_route_table(self, **kwargs):
+        tags = kwargs.pop('tags', None)
+        if tags is not None:
+            kwargs['tags'] = _build_tags(tags, TagForCreateRouteTableInput)
+        try:
+            return self._to_dict(
+                self.api.create_route_table(CreateRouteTableRequest(**kwargs)))
+        except ApiException as e:
+            raise Exception(_format_api_error("VPC CreateRouteTable failed", e))
+
+    def delete_route_table(self, route_table_id):
+        try:
+            return self._to_dict(self.api.delete_route_table(
+                DeleteRouteTableRequest(route_table_id=route_table_id)))
+        except ApiException as e:
+            raise Exception(_format_api_error(
+                "VPC DeleteRouteTable failed", e, ctx={'route_table_id': route_table_id}))
+
+    def describe_route_tables(self, **filters):
+        return self._paginate(
+            self.api.describe_route_table_list,
+            DescribeRouteTableListRequest, **filters)
+
+    def get_route_table(self, route_table_id, wait_for_visible=True):
+        deadline = time.time() + 20 if wait_for_visible else 0
+        while True:
+            # DescribeRouteTableList takes a single route_table_id, not a list.
+            matches = self.describe_route_tables(route_table_id=route_table_id)
+            if matches:
+                return matches[0]
+            if time.time() >= deadline:
+                return None
+            time.sleep(1)
+
+    def find_route_table_by_name(self, route_table_name, vpc_id,
+                                 project_name=None):
+        """Route table names need not be unique across VPCs, so vpc_id is
+        required. Within a VPC we still enforce uniqueness (BytePlus does
+        not), matching how the rest of this client handles by-name lookup.
+        """
+        if not vpc_id:
+            raise ValueError(
+                "vpc_id is required when looking up a route table by name")
+        filters = {'vpc_id': vpc_id, 'route_table_name': route_table_name}
+        if project_name:
+            filters['project_name'] = project_name
+        matches = self.describe_route_tables(**filters)
+        exact = [r for r in matches
+                 if (r.get('route_table_name') or r.get('RouteTableName'))
+                 == route_table_name]
+        if len(exact) > 1:
+            ids = [r.get('route_table_id') or r.get('RouteTableId') for r in exact]
+            raise Exception(
+                "Multiple route tables named '{}' in VPC {} ({}). "
+                "Pass route_table_id to disambiguate.".format(
+                    route_table_name, vpc_id, ids))
+        return exact[0] if exact else None
+
+    def modify_route_table(self, route_table_id, **kwargs):
+        kwargs['route_table_id'] = route_table_id
+        try:
+            return self._to_dict(self.api.modify_route_table_attributes(
+                ModifyRouteTableAttributesRequest(**kwargs)))
+        except ApiException as e:
+            raise Exception(
+                "VPC ModifyRouteTableAttributes failed: {}".format(e.reason))
+
+    def associate_route_table(self, route_table_id, subnet_id,
+                              client_token=None):
+        kwargs = {'route_table_id': route_table_id, 'subnet_id': subnet_id}
+        if client_token:
+            kwargs['client_token'] = client_token
+        try:
+            return self._to_dict(self.api.associate_route_table(
+                AssociateRouteTableRequest(**kwargs)))
+        except ApiException as e:
+            raise Exception(_format_api_error(
+                "VPC AssociateRouteTable failed", e,
+                ctx={'route_table_id': route_table_id, 'subnet_id': subnet_id}))
+
+    def disassociate_route_table(self, route_table_id, subnet_id):
+        try:
+            return self._to_dict(self.api.disassociate_route_table(
+                DisassociateRouteTableRequest(
+                    route_table_id=route_table_id, subnet_id=subnet_id)))
+        except ApiException as e:
+            raise Exception(_format_api_error(
+                "VPC DisassociateRouteTable failed", e,
+                ctx={'route_table_id': route_table_id, 'subnet_id': subnet_id}))
+
+    # ----- Route entries -----------------------------------------------------
+
+    def create_route_entry(self, **kwargs):
+        try:
+            return self._to_dict(
+                self.api.create_route_entry(CreateRouteEntryRequest(**kwargs)))
+        except ApiException as e:
+            raise Exception(_format_api_error(
+                "VPC CreateRouteEntry failed", e, ctx=kwargs))
+
+    def delete_route_entry(self, route_entry_id):
+        try:
+            return self._to_dict(self.api.delete_route_entry(
+                DeleteRouteEntryRequest(route_entry_id=route_entry_id)))
+        except ApiException as e:
+            raise Exception(_format_api_error(
+                "VPC DeleteRouteEntry failed", e,
+                ctx={'route_entry_id': route_entry_id}))
+
+    def describe_route_entries(self, **filters):
+        return self._paginate(
+            self.api.describe_route_entry_list,
+            DescribeRouteEntryListRequest, **filters)
+
+    def modify_route_entry(self, route_entry_id, **kwargs):
+        kwargs['route_entry_id'] = route_entry_id
+        try:
+            return self._to_dict(
+                self.api.modify_route_entry(ModifyRouteEntryRequest(**kwargs)))
+        except ApiException as e:
+            raise Exception(
+                "VPC ModifyRouteEntry failed: {}".format(e.reason))
+
+
+def associated_subnet_ids(route_table):
+    """Extract subnet IDs currently associated with a route table dict, in any
+    of the case/shape variants BytePlus returns across regions. Public so
+    modules can read associations without re-deriving the case-handling.
+    """
+    raw = (route_table.get('subnet_ids')
+           or route_table.get('SubnetIds')
+           or route_table.get('subnet_id')  # singular fallback some regions use
+           or route_table.get('SubnetId')
+           or [])
+    if isinstance(raw, str):
+        return [raw] if raw else []
+    return list(raw)
+
+
+def diff_route_table_associations(current, desired):
+    """Return (to_associate, to_disassociate) given two iterables of subnet IDs.
+
+    Order-independent set diff. Used by byteplus_route_table when the user
+    supplies associated_subnet_ids and we need to converge from `current`
+    (read from BytePlus) to `desired` (the playbook). When `desired` is None,
+    the caller should skip association management entirely — that's not this
+    helper's job to enforce.
+    """
+    cur = set(current or [])
+    des = set(desired or [])
+    return sorted(des - cur), sorted(cur - des)
+
+
+def is_system_route_table(route_table):
+    """True iff `route_table` (a dict from DescribeRouteTableList) is the
+    VPC-provided default. BytePlus marks this as RouteTableType='System'.
+    """
+    t = (route_table.get('route_table_type')
+         or route_table.get('RouteTableType'))
+    return t == 'System'
+
+
+def find_route_entry_match(entries, destination_cidr_block):
+    """Return the entry dict matching the given CIDR, or None.
+
+    BytePlus identifies a route entry uniquely within its table by
+    destination_cidr_block (you cannot have two routes for the same CIDR
+    in the same table). Accepts either case for the field key.
+    """
+    for e in entries or []:
+        cidr = e.get('destination_cidr_block') or e.get('DestinationCidrBlock')
+        if cidr == destination_cidr_block:
+            return e
+    return None
 
 
 def resolve_credentials(module):

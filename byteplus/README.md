@@ -385,6 +385,75 @@ Manage VPC networking primitives. All three share a common pattern:
 Security groups can only be deleted once no NICs reference them. Run teardown
 in reverse order; the modules do not auto-cascade.
 
+### byteplus_vpc_info
+
+Read-only listing of BytePlus VPCs. Filters on `vpc_ids`, `vpc_name`, and
+`project_name`; pagination is handled automatically. Mirrors the existing
+`byteplus_prefix_list_info` and `byteplus_iam_user_info` modules.
+
+```yaml
+- name: Find the prod VPC by name
+  fardani235.byteplus.byteplus_vpc_info:
+    vpc_name: prod-vpc
+    project_name: prod
+  register: prod_vpc
+```
+
+### byteplus_route_table / byteplus_route_table_info / byteplus_route_entry
+
+Manage custom (user-created) VPC route tables and the route entries inside
+them. The VPC-provided default route table (`RouteTableType=System`) is
+**refused** by `byteplus_route_table` on rename, association changes, and
+delete — these are almost always mistakes and BytePlus's own error messages
+are unhelpful. Routes can still be added to the default table via
+`byteplus_route_entry`.
+
+- **`byteplus_route_table`** — identification by `route_table_id` or by
+  `(vpc_id, route_table_name)`. Mutable fields (`route_table_name`,
+  `description`) are diffed and pushed through `ModifyRouteTableAttributes`.
+  Subnet associations are reconciled when `associated_subnet_ids` is
+  supplied — supplying it takes ownership of the full set. **Omitting it
+  leaves existing associations untouched**, so partial config updates do
+  not accidentally disassociate subnets.
+- **`byteplus_route_table_info`** — list / describe route tables. Set
+  `include_entries: true` to hydrate each table's route entries inline at
+  the cost of one extra `DescribeRouteEntryList` call per table.
+- **`byteplus_route_entry`** — manages one route entry per task, identified
+  by `(route_table_id, destination_cidr_block)`. Next-hop types are written
+  in snake_case (`nat_gateway`, `network_interface`, `ipv6_gateway`,
+  `transit_router`, `vpn_gateway`, `ha_vip`, `private_link_vpc_endpoint`,
+  `instance`, `ip_address`) and translated to BytePlus's PascalCase
+  spelling on the wire. Updates use `ModifyRouteEntry` in place, so
+  changing next-hop or description does not interrupt traffic.
+
+```yaml
+- name: Custom route table for the app tier
+  fardani235.byteplus.byteplus_route_table:
+    route_table_name: prod-app
+    vpc_id: "{{ vpc.vpc.vpc_id }}"
+    associated_subnet_ids:
+      - "{{ app_subnet.subnet.subnet_id }}"
+  register: app_rt
+
+- name: Default egress via the NAT gateway
+  fardani235.byteplus.byteplus_route_entry:
+    route_table_id: "{{ app_rt.route_table.route_table_id }}"
+    destination_cidr_block: 0.0.0.0/0
+    next_hop_type: nat_gateway
+    next_hop_id: "{{ nat_gw_id }}"
+
+- name: Inspect the table with its routes
+  fardani235.byteplus.byteplus_route_table_info:
+    route_table_ids:
+      - "{{ app_rt.route_table.route_table_id }}"
+    include_entries: true
+  register: app_rt_full
+```
+
+`byteplus_route_table` refuses to delete a table that still has subnet
+associations or non-system entries — BytePlus rejects the API call, and
+the modules surface the error rather than silently revoking state.
+
 ### byteplus_security_group_rule
 
 Manages individual ingress / egress rules on a security group.

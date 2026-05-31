@@ -1,0 +1,52 @@
+minor_changes:
+  - >
+    Add C(byteplus_vpc_info) module — read-only listing of BytePlus
+    VPCs with optional filters for C(vpc_ids), C(vpc_name), and
+    C(project_name). Pagination is handled by C(VPCClient.describe_vpcs)
+    so callers get the full result set in one task.
+  - >
+    Add C(byteplus_route_table) module — manage custom VPC route
+    tables (create / rename / change description / delete) and
+    optionally synchronise subnet associations via
+    O(associated_subnet_ids). The default route table
+    (C(RouteTableType=System)) is rejected on rename, association
+    changes, and delete with a clear message; routes can still be
+    added to it via M(fardani235.byteplus.byteplus_route_entry).
+    Omitting C(associated_subnet_ids) leaves the existing set
+    untouched, so partial config updates do not accidentally
+    disassociate subnets.
+  - >
+    Add C(byteplus_route_table_info) module — list / describe route
+    tables with an optional C(include_entries) flag that hydrates each
+    table's route entries inline at the cost of one extra
+    C(DescribeRouteEntryList) call per table. Mirrors the
+    C(include_entries) pattern in C(byteplus_prefix_list_info).
+  - >
+    Add C(byteplus_route_entry) module — manage one route entry per
+    task, identified by C((route_table_id, destination_cidr_block)).
+    Next-hop types are written in snake_case in playbooks
+    (C(nat_gateway), C(network_interface), C(ipv6_gateway), …) and
+    translated to BytePlus's PascalCase spelling on the wire via a
+    fixed C(NEXT_HOP_TYPE_MAP). In-place updates use
+    C(ModifyRouteEntry) keyed by C(route_entry_id), so changing
+    next-hop or description does not interrupt traffic via a
+    revoke / re-authorize cycle.
+  - >
+    Extend C(plugins/module_utils/vpc_common.py) with route-table and
+    route-entry support — C(VPCClient.create_route_table) /
+    C(delete_route_table) / C(describe_route_tables) /
+    C(get_route_table) / C(find_route_table_by_name) /
+    C(modify_route_table) / C(associate_route_table) /
+    C(disassociate_route_table); C(create_route_entry) /
+    C(delete_route_entry) / C(describe_route_entries) /
+    C(modify_route_entry); and the pure helpers
+    C(diff_route_table_associations), C(is_system_route_table),
+    C(find_route_entry_match), plus the
+    C(NEXT_HOP_TYPE_MAP) / C(NEXT_HOP_TYPE_REVERSE) translation tables.
+  - >
+    Add C(playbooks/smoke_vpc.yml) — full lifecycle smoke against a
+    live BytePlus account covering VPC create, C(byteplus_vpc_info)
+    lookup, subnet create, custom route table create and association,
+    C(byteplus_route_table_info) hydration, the system-route-table
+    refusal path, and a route-entry create / update / delete cycle.
+    Excluded from the published tarball.

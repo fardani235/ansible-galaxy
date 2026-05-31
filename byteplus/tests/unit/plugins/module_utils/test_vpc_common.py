@@ -103,6 +103,18 @@ def _stub_sdk():
         ('remove_prefix_list_entry_for_modify_prefix_list_input',
          'RemovePrefixListEntryForModifyPrefixListInput'),
         ('tag_for_create_prefix_list_input', 'TagForCreatePrefixListInput'),
+        ('create_route_table_request', 'CreateRouteTableRequest'),
+        ('delete_route_table_request', 'DeleteRouteTableRequest'),
+        ('describe_route_table_list_request', 'DescribeRouteTableListRequest'),
+        ('modify_route_table_attributes_request',
+         'ModifyRouteTableAttributesRequest'),
+        ('associate_route_table_request', 'AssociateRouteTableRequest'),
+        ('disassociate_route_table_request', 'DisassociateRouteTableRequest'),
+        ('tag_for_create_route_table_input', 'TagForCreateRouteTableInput'),
+        ('create_route_entry_request', 'CreateRouteEntryRequest'),
+        ('delete_route_entry_request', 'DeleteRouteEntryRequest'),
+        ('describe_route_entry_list_request', 'DescribeRouteEntryListRequest'),
+        ('modify_route_entry_request', 'ModifyRouteEntryRequest'),
     ]
     for snake, cls in request_models:
         mod = types.ModuleType('byteplussdkvpc.models.' + snake)
@@ -560,3 +572,187 @@ class TestModifyPrefixList:
         client.api.modify_prefix_list = mock.Mock(return_value={})
         client.modify_prefix_list('pl-1')
         assert client.api.modify_prefix_list.called
+
+
+class TestDiffRouteTableAssociations:
+    def test_empty_inputs(self):
+        assert vpc.diff_route_table_associations([], []) == ([], [])
+
+    def test_only_add(self):
+        add, remove = vpc.diff_route_table_associations([], ['s-1', 's-2'])
+        assert add == ['s-1', 's-2']
+        assert remove == []
+
+    def test_only_remove(self):
+        add, remove = vpc.diff_route_table_associations(['s-1', 's-2'], [])
+        assert add == []
+        assert remove == ['s-1', 's-2']
+
+    def test_overlap(self):
+        add, remove = vpc.diff_route_table_associations(
+            ['s-1', 's-2'], ['s-2', 's-3'])
+        assert add == ['s-3']
+        assert remove == ['s-1']
+
+    def test_set_semantics_no_order_dependence(self):
+        # The function should treat inputs as sets, not ordered sequences.
+        add_a, rem_a = vpc.diff_route_table_associations(
+            ['s-1', 's-2'], ['s-1', 's-2'])
+        add_b, rem_b = vpc.diff_route_table_associations(
+            ['s-2', 's-1'], ['s-1', 's-2'])
+        assert (add_a, rem_a) == (add_b, rem_b) == ([], [])
+
+    def test_none_inputs_treated_as_empty(self):
+        # Callers may pass None when the field is absent from the API response.
+        assert vpc.diff_route_table_associations(None, None) == ([], [])
+        assert vpc.diff_route_table_associations(None, ['s-1']) == (['s-1'], [])
+
+
+class TestIsSystemRouteTable:
+    def test_system_snake_case(self):
+        assert vpc.is_system_route_table({'route_table_type': 'System'}) is True
+
+    def test_system_pascal_case(self):
+        assert vpc.is_system_route_table({'RouteTableType': 'System'}) is True
+
+    def test_custom(self):
+        assert vpc.is_system_route_table({'route_table_type': 'Custom'}) is False
+
+    def test_missing_field(self):
+        # Defensive: a record without the type field shouldn't be treated as
+        # System (failing open would refuse to manage legitimate custom tables).
+        assert vpc.is_system_route_table({}) is False
+
+
+class TestFindRouteEntryMatch:
+    def test_match_snake_case(self):
+        entries = [
+            {'destination_cidr_block': '10.0.0.0/16', 'route_entry_id': 're-1'},
+            {'destination_cidr_block': '0.0.0.0/0', 'route_entry_id': 're-2'},
+        ]
+        assert vpc.find_route_entry_match(
+            entries, '0.0.0.0/0')['route_entry_id'] == 're-2'
+
+    def test_match_pascal_case(self):
+        entries = [{'DestinationCidrBlock': '10.0.0.0/16', 'RouteEntryId': 're-1'}]
+        assert vpc.find_route_entry_match(
+            entries, '10.0.0.0/16')['RouteEntryId'] == 're-1'
+
+    def test_no_match(self):
+        assert vpc.find_route_entry_match([{'destination_cidr_block': '10/8'}],
+                                          '0.0.0.0/0') is None
+
+    def test_empty_or_none(self):
+        assert vpc.find_route_entry_match([], '0.0.0.0/0') is None
+        assert vpc.find_route_entry_match(None, '0.0.0.0/0') is None
+
+
+class TestNextHopTypeMap:
+    def test_round_trip(self):
+        for snake, pascal in vpc.NEXT_HOP_TYPE_MAP.items():
+            assert vpc.NEXT_HOP_TYPE_REVERSE[pascal] == snake
+
+    def test_all_lowercase_snake(self):
+        # Keys are user-facing — guarantee they're snake_case so playbook
+        # authors don't have to remember mixed-case keys.
+        for k in vpc.NEXT_HOP_TYPE_MAP:
+            assert k == k.lower()
+            assert ' ' not in k
+
+
+class TestFindRouteTableByName:
+    def test_requires_vpc_id(self):
+        client = _make_client()
+        with pytest.raises(ValueError, match='vpc_id is required'):
+            client.find_route_table_by_name('app', vpc_id=None)
+
+    def test_single_match(self):
+        client = _make_client()
+        client.describe_route_tables = mock.Mock(return_value=[
+            {'route_table_id': 'vtb-1', 'route_table_name': 'app'},
+        ])
+        r = client.find_route_table_by_name('app', vpc_id='v-1')
+        assert r['route_table_id'] == 'vtb-1'
+
+    def test_multiple_raises(self):
+        client = _make_client()
+        client.describe_route_tables = mock.Mock(return_value=[
+            {'route_table_id': 'vtb-1', 'route_table_name': 'app'},
+            {'route_table_id': 'vtb-2', 'route_table_name': 'app'},
+        ])
+        with pytest.raises(Exception, match='Multiple route tables'):
+            client.find_route_table_by_name('app', vpc_id='v-1')
+
+    def test_prefix_excluded(self):
+        # describe_route_tables filters by prefix in some regions; final pass
+        # must enforce exact match.
+        client = _make_client()
+        client.describe_route_tables = mock.Mock(return_value=[
+            {'route_table_id': 'vtb-1', 'route_table_name': 'app'},
+            {'route_table_id': 'vtb-2', 'route_table_name': 'app-staging'},
+        ])
+        assert client.find_route_table_by_name(
+            'app', vpc_id='v-1')['route_table_id'] == 'vtb-1'
+
+
+class TestRouteTableApiPassthrough:
+    def test_create_threads_tags(self):
+        client = _make_client()
+        captured = {}
+
+        def capture(req):
+            captured['fields'] = req.__dict__
+            return {'route_table_id': 'vtb-1'}
+        client.api.create_route_table = mock.Mock(side_effect=capture)
+        client.create_route_table(
+            vpc_id='v-1', route_table_name='app',
+            tags=[{'key': 'env', 'value': 'prod'}])
+        # Tags should have been wrapped into TagForCreateRouteTableInput.
+        assert len(captured['fields']['tags']) == 1
+        assert captured['fields']['tags'][0].key == 'env'
+
+    def test_associate_threads_subnet(self):
+        client = _make_client()
+        captured = {}
+
+        def capture(req):
+            captured['fields'] = req.__dict__
+            return {}
+        client.api.associate_route_table = mock.Mock(side_effect=capture)
+        client.associate_route_table('vtb-1', 's-1')
+        assert captured['fields']['route_table_id'] == 'vtb-1'
+        assert captured['fields']['subnet_id'] == 's-1'
+
+
+class TestRouteEntryApiPassthrough:
+    def test_modify_includes_route_entry_id(self):
+        client = _make_client()
+        captured = {}
+
+        def capture(req):
+            captured['fields'] = req.__dict__
+            return {}
+        client.api.modify_route_entry = mock.Mock(side_effect=capture)
+        client.modify_route_entry('re-1', next_hop_type='NatGW',
+                                  next_hop_id='ngw-1')
+        assert captured['fields']['route_entry_id'] == 're-1'
+        assert captured['fields']['next_hop_type'] == 'NatGW'
+
+
+class TestAssociatedSubnetIds:
+    def test_snake_list(self):
+        assert vpc.associated_subnet_ids(
+            {'subnet_ids': ['s-1', 's-2']}) == ['s-1', 's-2']
+
+    def test_pascal_list(self):
+        assert vpc.associated_subnet_ids({'SubnetIds': ['s-1']}) == ['s-1']
+
+    def test_string_fallback(self):
+        # Some regions report a single bound subnet as a scalar — accept it.
+        assert vpc.associated_subnet_ids({'subnet_id': 's-1'}) == ['s-1']
+
+    def test_empty_string_means_empty(self):
+        assert vpc.associated_subnet_ids({'subnet_id': ''}) == []
+
+    def test_missing(self):
+        assert vpc.associated_subnet_ids({}) == []
